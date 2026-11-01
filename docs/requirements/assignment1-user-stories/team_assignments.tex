@@ -13,15 +13,12 @@
 \usepackage{geometry}
 \usepackage{array}
 \usepackage{booktabs}
-\usepackage[table]{xcolor}
 \geometry{left=25mm,right=25mm,top=23mm,bottom=23mm}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{5pt}
-\definecolor{BrewGreen}{HTML}{285C43}
-\definecolor{BrewPale}{HTML}{EDF4EF}
 \newcommand{\assignmentrow}[2]{%
-  \parbox[c][17mm][c]{43mm}{#1} &
-  \parbox[c][17mm][c]{100mm}{#2} \\}
+  \parbox[c][16mm][c]{43mm}{#1} &
+  \parbox[c][16mm][c]{100mm}{#2} \\}
 
 \begin{document}
 \begin{center}
@@ -34,12 +31,10 @@
 \begin{center}
 \small
 \setlength{\tabcolsep}{7pt}
-\rowcolors{2}{BrewPale}{white}
 \begin{tabular}{p{43mm}p{100mm}}
 \toprule
-\rowcolor{BrewGreen}
-\parbox[c][11mm][c]{43mm}{\textcolor{white}{\textbf{Họ và tên}}} &
-\parbox[c][11mm][c]{100mm}{\textcolor{white}{\textbf{Nhiệm vụ}}} \\
+\parbox[c][11mm][c]{43mm}{\centering\textbf{Họ và tên}} &
+\parbox[c][11mm][c]{100mm}{\centering\textbf{Nhiệm vụ}} \\
 \midrule
 \assignmentrow{Trương Trọng Phúc}{Khởi tạo cấu trúc dự án; xây dựng giỏ hàng và API tạo đơn hàng.}
 \assignmentrow{Chế Văn Nam}{Xây dựng thanh toán Ví/Thẻ, xử lý kết quả và chống ghi nhận thanh toán lặp.}
