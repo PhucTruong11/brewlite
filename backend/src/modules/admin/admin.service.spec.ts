@@ -16,7 +16,7 @@ describe('AdminService', () => {
         order: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn(), aggregate: vi.fn() },
         promotion: { findUnique: vi.fn(), create: vi.fn() },
     };
-    const inventory = { restore: vi.fn() };
+    const inventory = { release: vi.fn(), restore: vi.fn() };
     const service = new AdminService(prisma as never, inventory as never);
 
     beforeEach(() => vi.clearAllMocks());
@@ -71,6 +71,40 @@ describe('AdminService', () => {
     it('chặn chuyển trạng thái không hợp lệ (COMPLETED -> PREPARING)', async () => {
         tx.order.findUnique.mockResolvedValue({ id: 'o1', status: 'COMPLETED', items: [] });
         await expect(service.updateStatus('o1', 'PREPARING' as never)).rejects.toThrow(BadRequestException);
+    });
+
+    it.each(['PENDING', 'PAYMENT_FAILED'])(
+        'hủy đơn %s: nhả nguyên liệu đã giữ trước khi đổi trạng thái',
+        async (status) => {
+            const order = {
+                id: 'o1', status, inventoryState: 'RESERVED', items: [],
+            };
+            tx.order.findUnique.mockResolvedValue(order);
+
+            await service.updateStatus('o1', 'CANCELLED' as never);
+
+            expect(inventory.release).toHaveBeenCalledExactlyOnceWith(tx, order);
+            expect(inventory.restore).not.toHaveBeenCalled();
+            expect(inventory.release.mock.invocationCallOrder[0]).toBeLessThan(
+                tx.order.update.mock.invocationCallOrder[0],
+            );
+            expect(tx.order.update).toHaveBeenCalledWith({
+                where: { id: 'o1' }, data: { status: 'CANCELLED' },
+            });
+        },
+    );
+
+    it('không nhả kho lần nữa nếu nguyên liệu của đơn đã được trả', async () => {
+        tx.order.findUnique.mockResolvedValue({
+            id: 'o1', status: 'PENDING', inventoryState: 'RELEASED', items: [],
+        });
+
+        await service.updateStatus('o1', 'CANCELLED' as never);
+
+        expect(inventory.release).not.toHaveBeenCalled();
+        expect(tx.order.update).toHaveBeenCalledWith({
+            where: { id: 'o1' }, data: { status: 'CANCELLED' },
+        });
     });
 
     it('hủy đơn PAID: hoàn kho, thu hồi điểm, ghi sổ điểm', async () => {
