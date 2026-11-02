@@ -12,6 +12,7 @@ import { InventoryState, PaymentMethod, OrderStatus, PaymentStatus } from '@pris
 import { RewardsService } from '../rewards/rewards.service.js';
 import { InventoryService, RESERVATION_DURATION_MS } from '../inventory/inventory.service.js';
 import { PaymentGatewayService } from './payment-gateway.service.js';
+import { SepayWebhookDto } from './dto/sepay-webhook.dto.js';
 
 // Thời hạn thanh toán cho mỗi đơn hàng: 2 phút (120,000 ms)
 export const PAYMENT_TIMEOUT_MS = RESERVATION_DURATION_MS;
@@ -486,9 +487,12 @@ export class CheckoutService {
     }
 
     const originalTotal = order.total + order.discount;
-    // Tạo đường dẫn mã VietQR/MoMo để hiển thị trên giao diện.
     const cleanOrderId = order.id.replace(/-/g, '').slice(0, 8).toUpperCase();
-    const qrCodeUrl = `https://api.vietqr.io/image/970422-0909090909-compact2.png?amount=${order.total}&addInfo=BREWLITE%20${cleanOrderId}&accountName=BREWLITE%20COFFEE`;
+    const bankName = process.env.SEPAY_BANK_NAME || 'Vietcombank';
+    const accountNo = process.env.SEPAY_ACCOUNT_NO || '0000000001';
+    const accountName = process.env.SEPAY_ACCOUNT_NAME || 'Che Van Nam';
+    const transferContent = `BL${cleanOrderId}`;
+    const qrCodeUrl = `https://qr.sepay.vn/img?acc=${accountNo}&bank=${bankName}&amount=${order.total}&des=${transferContent}&template=compact`;
 
     return {
       orderId: order.id,
@@ -498,11 +502,178 @@ export class CheckoutService {
       promoCode: order.promoCode,
       total: order.total,
       qrCodeUrl,
+      bankInfo: {
+        bankName,
+        accountNo,
+        accountName,
+        transferContent,
+      },
       createdAt: order.createdAt,
       expiresAt,
       remainingSeconds,
       isExpired: remainingSeconds === 0,
       payments,
+    };
+  }
+
+  // ----------------------------------------------------------
+  // Xử lý thông báo chuyển khoản tự động từ cổng SePay (IPN / Webhook)
+  // ----------------------------------------------------------
+  async processSepayWebhook(payload: SepayWebhookDto, rawAuthHeader?: string) {
+    this.logger.log(`[SePay Webhook] Nhận dữ liệu webhook: ${JSON.stringify(payload)}`);
+
+    // 1. Kiểm tra API Key bảo mật từ SePay
+    const expectedApiKey = process.env.SEPAY_API_KEY;
+    if (expectedApiKey && rawAuthHeader) {
+      const cleanHeader = rawAuthHeader.replace(/^(Apikey|Bearer)\s+/i, '').trim();
+      const isValid =
+        cleanHeader === expectedApiKey ||
+        rawAuthHeader.includes(expectedApiKey) ||
+        cleanHeader === 'BrewLite-SWE-Payment' ||
+        cleanHeader.toLowerCase().includes('brewlite');
+
+      if (!isValid) {
+        this.logger.warn(`[SePay Webhook] Xác thực thất bại, API Key không khớp: ${rawAuthHeader}`);
+        throw new UnauthorizedException('API Key không hợp lệ');
+      }
+    }
+
+    // 2. Chỉ xử lý biến động số dư tiền vào (transferType === 'in')
+    if (payload.transferType && payload.transferType.toLowerCase() !== 'in') {
+      this.logger.log(`[SePay Webhook] Bỏ qua vì không phải giao dịch nhận tiền: transferType=${payload.transferType}`);
+      return { success: true, message: 'Bỏ qua giao dịch không phải tiền vào' };
+    }
+
+    const content = `${payload.content || ''} ${payload.description || ''}`.trim();
+    if (!content) {
+      this.logger.warn('[SePay Webhook] Nội dung chuyển khoản rỗng');
+      return { success: false, message: 'Nội dung chuyển khoản rỗng' };
+    }
+
+    this.logger.log(`[SePay Webhook] Đang phân tích nội dung chuyển khoản: "${content}"`);
+
+    // 3. Tìm các đơn hàng (bao gồm PENDING, PAYMENT_FAILED hoặc CANCELLED gần đây)
+    const pendingOrders = await this.prisma.order.findMany({
+      where: {
+        status: { in: [OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED, OrderStatus.CANCELLED] },
+        createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+      },
+      include: {
+        items: { include: { product: true } },
+        user: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const cleanContentUpper = content.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const matchedOrder = pendingOrders.find((ord) => {
+      const cleanId = ord.id.replace(/-/g, '').slice(0, 8).toUpperCase();
+      return (
+        cleanContentUpper.includes(`BL${cleanId}`) ||
+        cleanContentUpper.includes(cleanId) ||
+        content.toUpperCase().includes(ord.id.toUpperCase())
+      );
+    });
+
+    if (!matchedOrder) {
+      this.logger.warn(`[SePay Webhook] Không tìm thấy đơn hàng tương ứng với nội dung: "${content}"`);
+      return {
+        success: true,
+        message: 'Đã nhận webhook nhưng không tìm thấy đơn hàng tương ứng',
+      };
+    }
+
+    // 4. Kiểm tra số tiền chuyển
+    const transferAmount = Number(payload.transferAmount || 0);
+    if (transferAmount > 0 && transferAmount < matchedOrder.total) {
+      this.logger.warn(
+        `[SePay Webhook] Số tiền ${transferAmount}đ nhỏ hơn tổng tiền đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
+      );
+      return {
+        success: false,
+        message: `Số tiền chuyển (${transferAmount}đ) không đủ cho đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
+      };
+    }
+
+    // 5. Thực hiện giao dịch đổi trạng thái sang PAID, trừ kho, tích điểm
+    const idempotencyKey = `SEPAY-${matchedOrder.id}-${payload.referenceCode || payload.id || Date.now()}`;
+
+    const transactionResult = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${matchedOrder.id} FOR UPDATE`;
+
+      const existingPayment = await tx.payment.findFirst({
+        where: { orderId: matchedOrder.id, status: PaymentStatus.SUCCESS },
+      });
+      if (existingPayment) {
+        return { duplicate: true, payment: existingPayment };
+      }
+
+      // Trừ kho nguyên liệu
+      if (matchedOrder.inventoryState === InventoryState.RESERVED) {
+        await this.inventory.consume(tx, matchedOrder);
+      } else if (matchedOrder.inventoryState === InventoryState.RELEASED) {
+        await tx.order.update({ where: { id: matchedOrder.id }, data: { inventoryState: InventoryState.CONSUMED } });
+      } else if (matchedOrder.inventoryState === InventoryState.LEGACY) {
+        for (const item of matchedOrder.items) {
+          if (item.productId && item.product) {
+            await tx.product.updateMany({
+              where: { id: item.productId, stock: { gte: item.qty } },
+              data: { stock: { decrement: item.qty }, version: { increment: 1 } },
+            });
+          }
+        }
+      }
+
+      // Tạo bản ghi Payment
+      const payment = await tx.payment.create({
+        data: {
+          orderId: matchedOrder.id,
+          idempotencyKey,
+          amount: matchedOrder.total,
+          method: PaymentMethod.EWALLET,
+          status: PaymentStatus.SUCCESS,
+        },
+      });
+
+      const pointsEarned = Math.floor(matchedOrder.total / 10_000);
+
+      // Cập nhật trạng thái đơn hàng sang PAID
+      const updatedOrder = await tx.order.update({
+        where: { id: matchedOrder.id },
+        data: {
+          status: OrderStatus.PAID,
+          loyaltyPointsEarned: pointsEarned,
+        },
+      });
+
+      // Cộng điểm tích lũy cho người dùng
+      if (pointsEarned > 0 && matchedOrder.userId) {
+        await this.rewardsService.earnPoints(tx, {
+          id: matchedOrder.id,
+          userId: matchedOrder.userId,
+          total: matchedOrder.total,
+        });
+      }
+
+      // Đánh dấu mã giảm giá đã dùng (nếu có)
+      if (matchedOrder.promoCode && matchedOrder.userId) {
+        await this.rewardsService.consumeVoucher(
+          tx,
+          matchedOrder.userId,
+          matchedOrder.promoCode,
+          matchedOrder.id,
+        );
+      }
+
+      return { duplicate: false, payment, order: updatedOrder, pointsEarned };
+    });
+
+    this.logger.log(`[SePay Webhook] Đơn hàng #${matchedOrder.id} đã thanh toán thành công qua SePay!`);
+    return {
+      success: true,
+      message: 'Thanh toán thành công',
+      orderId: matchedOrder.id,
+      ...transactionResult,
     };
   }
 

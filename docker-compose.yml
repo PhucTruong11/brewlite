@@ -1,0 +1,7 @@
+# Docker Compose cho BrewLite (Gộp db, api, web)
+# Đặt name: docker để khớp với project name và volume docker_brewlite_pgdata đã tạo trước đó
+name: docker
+
+include:
+  - docker/docker-compose.dev.yml
+  - docker/docker-compose.app.yml
