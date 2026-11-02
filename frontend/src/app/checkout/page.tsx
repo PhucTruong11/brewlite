@@ -26,6 +26,12 @@ type CheckoutStatus = {
   promoCode: string | null;
   qrCodeUrl: string;
   expiresAt: string;
+  bankInfo?: {
+    bankName: string;
+    accountNo: string;
+    accountName: string;
+    transferContent: string;
+  };
 };
 
 type SavedOrder = {
@@ -79,6 +85,11 @@ function CheckoutContent() {
   // Trạng thái xử lý thanh toán
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
+  const [statusFeedback, setStatusFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
 
   // Dữ liệu HÓA ĐƠN XUẤT SAU KHI THANH TOÁN THÀNH CÔNG
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
@@ -108,6 +119,39 @@ function CheckoutContent() {
         setTimeLeft(response.data.status === 'CANCELLED'
           ? 0
           : Math.max(0, Math.floor((serverDeadlineRef.current - Date.now()) / 1000)));
+
+        // Tự động kích hoạt hóa đơn khi cổng thanh toán SePay báo đơn đã PAID
+        if (response.data.status === 'PAID') {
+          setReceiptData((prev) => {
+            if (prev) return prev;
+            const now = new Date();
+            const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
+            return {
+              orderId,
+              invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
+              paymentId: `PAY-SEPAY-${orderId.slice(-6).toUpperCase()}`,
+              paidAt: now.toLocaleString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+              }),
+              items: orderItems ? [...orderItems] : [...items],
+              subtotal: response.data.originalTotal,
+              discount: response.data.discount,
+              promoCode: response.data.promoCode,
+              finalTotal: response.data.total,
+              pointsEarned: Math.floor(response.data.total / 10000),
+              method: 'EWALLET',
+            };
+          });
+          clearCart();
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
+          }
+        }
       } catch {
         if (active) setErrorMessage('Không tải được thời hạn thanh toán của đơn hàng.');
       }
@@ -280,6 +324,63 @@ function CheckoutContent() {
     }
   };
 
+  // Khách bấm kiểm tra thủ công trạng thái giao dịch VietQR từ SePay
+  const handleManualCheckPayment = async () => {
+    if (isCheckingPayment || !orderId) return;
+    setIsCheckingPayment(true);
+    setStatusFeedback(null);
+    try {
+      const response = await api.get<CheckoutStatus>(`/checkout/status/${orderId}`);
+      setCheckoutStatus(response.data);
+      if (response.data.status === 'PAID') {
+        setStatusFeedback({
+          type: 'success',
+          message: 'SePay đã xác nhận thanh toán thành công! Đang xuất hóa đơn...',
+        });
+        const now = new Date();
+        const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
+        setReceiptData({
+          orderId,
+          invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
+          paymentId: `PAY-SEPAY-${orderId.slice(-6).toUpperCase()}`,
+          paidAt: now.toLocaleString('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+          }),
+          items: orderItems ? [...orderItems] : [...items],
+          subtotal: response.data.originalTotal,
+          discount: response.data.discount,
+          promoCode: response.data.promoCode,
+          finalTotal: response.data.total,
+          pointsEarned: Math.floor(response.data.total / 10000),
+          method: 'EWALLET',
+        });
+        clearCart();
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
+        }
+      } else {
+        setStatusFeedback({
+          type: 'warning',
+          message: 'Chưa nhận được giao dịch từ SePay. Nếu bạn vừa chuyển khoản, vui lòng đợi 3-5 giây để hệ thống nhận diện.',
+        });
+        setTimeout(() => setStatusFeedback(null), 6000);
+      }
+    } catch {
+      setStatusFeedback({
+        type: 'error',
+        message: 'Không thể kết nối đến máy chủ để kiểm tra. Vui lòng thử lại.',
+      });
+      setTimeout(() => setStatusFeedback(null), 4000);
+    } finally {
+      setIsCheckingPayment(false);
+    }
+  };
+
   // Đơn đã được tạo ở giỏ; nút xác nhận chỉ thanh toán orderId đang chờ.
   const handleCheckout = async () => {
     if (isSubmitting) return;
@@ -295,6 +396,12 @@ function CheckoutContent() {
     }
     if (checkoutStatus.status !== 'PENDING' && checkoutStatus.status !== 'PAYMENT_FAILED') {
       setErrorMessage('Đơn hàng này không còn ở trạng thái chờ thanh toán.');
+      return;
+    }
+
+    // Với phương thức VietQR và đơn có tiền (>0), bắt buộc phải thanh toán qua SePay Webhook
+    if (method === 'EWALLET' && finalTotal > 0) {
+      setErrorMessage('Đơn hàng chọn thanh toán qua VietQR cần được quét mã và xác thực qua SePay.');
       return;
     }
 
@@ -332,7 +439,7 @@ function CheckoutContent() {
           },
         },
       );
-
+      //ép kiểu dữ liệu trả về từ server để dễ thao tác 
       const paymentData = paymentRes.data as {
         success?: boolean;
         isDuplicate?: boolean;
@@ -404,6 +511,86 @@ function CheckoutContent() {
         message = err.message;
       }
 
+      setErrorMessage(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Nút "Test nhanh" bỏ qua quét QR dành cho dev test các module khác
+  const handleQuickTestPay = async () => {
+    if (isSubmitting || !orderId) return;
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `test-quick-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+      const paymentRes = await api.post(
+        '/checkout',
+        {
+          orderId,
+          method: 'EWALLET',
+        },
+        {
+          headers: {
+            'Idempotency-Key': idempotencyKey,
+          },
+        },
+      );
+      const paymentData = paymentRes.data as {
+        success?: boolean;
+        payment?: { id: string; createdAt?: string; amount?: number };
+        pointsEarned?: number;
+      };
+
+      const now = new Date();
+      const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
+
+      setReceiptData({
+        orderId,
+        invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
+        paymentId: paymentData.payment?.id || `PAY-TEST-${orderId.slice(-6).toUpperCase()}`,
+        paidAt: now.toLocaleString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        }),
+        items: orderItems ? [...orderItems] : [...items],
+        subtotal: checkoutStatus?.originalTotal ?? subtotal,
+        discount: checkoutStatus?.discount ?? discountAmount,
+        promoCode: checkoutStatus?.promoCode ?? null,
+        finalTotal: paymentData.payment?.amount ?? finalTotal,
+        pointsEarned: paymentData.pointsEarned ?? Math.floor(finalTotal / 10000),
+        method: 'EWALLET',
+      });
+
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
+      }
+      clearCart();
+    } catch (err: unknown) {
+      let message = 'Lỗi thanh toán test nhanh.';
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'response' in err &&
+        typeof (err as { response?: unknown }).response === 'object'
+      ) {
+        const resData = (err as { response?: { data?: { message?: unknown } } }).response?.data;
+        if (resData?.message) {
+          message = Array.isArray(resData.message)
+            ? resData.message.join(', ')
+            : String(resData.message);
+        }
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       setErrorMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -503,6 +690,7 @@ function CheckoutContent() {
             onMethodChange={setMethod}
             finalTotal={finalTotal}
             qrUrl={vietQrUrl}
+            bankInfo={checkoutStatus?.bankInfo}
             cardInfo={cardInfo}
             onCardInfoChange={handleCardInfoChange}
             cardErrors={cardErrors}
@@ -526,6 +714,11 @@ function CheckoutContent() {
             onRenew={handleRenewOrder}
             onReturnToCart={() => router.push('/cart')}
             appliedPromo={displayedPromo}
+            method={method}
+            onCheckPaymentStatus={handleManualCheckPayment}
+            isCheckingStatus={isCheckingPayment}
+            statusFeedback={statusFeedback}
+            onQuickTest={handleQuickTestPay}
           />
         </div>
       </div>

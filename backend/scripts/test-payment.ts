@@ -1,7 +1,21 @@
 import { PrismaClient } from '@prisma/client';
+import crypto from 'node:crypto';
 
 const prisma = new PrismaClient();
 const BASE_URL = 'http://localhost:3001/api';
+
+function createJwt(userId: string, email: string): string {
+  const secret = process.env.JWT_SECRET || 'brewlite-dev-jwt-secret-change-in-production';
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    sub: userId,
+    email: email,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
 
 // Màu sắc console
 const GREEN = '\x1b[32m';
@@ -34,6 +48,17 @@ async function runTests() {
     process.exit(1);
   }
 
+  // Tự động đính kèm JWT Bearer Token vào các request của test script
+  const testJwtToken = createJwt(user.id, user.email);
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = ((url: any, init?: any) => {
+    const headers = new Headers(init?.headers);
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${testJwtToken}`);
+    }
+    return nativeFetch(url, { ...init, headers });
+  }) as typeof globalThis.fetch;
+
   const sampleProduct = await prisma.product.findFirst();
   if (!sampleProduct) {
     console.error(`${RED}❌ Không tìm thấy sản phẩm nào trong DB! Hãy chạy npx tsx prisma/seed.ts trước.${RESET}`);
@@ -49,6 +74,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'M',
           qty: 1,
           lineTotal: 55000,
@@ -188,6 +214,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'M',
           qty: 1,
           lineTotal: 45000,
@@ -272,6 +299,7 @@ async function runTests() {
         items: {
           create: [{
             productId: limitedProduct.id,
+            productName: limitedProduct.name,
             size: 'M',
             qty: 1,
             lineTotal: 49000,
@@ -287,6 +315,7 @@ async function runTests() {
         items: {
           create: [{
             productId: limitedProduct.id,
+            productName: limitedProduct.name,
             size: 'M',
             qty: 1,
             lineTotal: 49000,
@@ -363,6 +392,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'M',
           qty: 1,
           lineTotal: 60000,
@@ -394,7 +424,7 @@ async function runTests() {
 
   const isTimeoutHandled =
     resTimeout.status === 400 &&
-    dataTimeout.message?.includes('quá 2 phút') &&
+    dataTimeout.message?.includes('hết hạn') &&
     orderAfterTimeout?.status === 'CANCELLED' &&
     dataCountdown.remainingSeconds === 0 &&
     dataCountdown.isExpired === true;
@@ -427,6 +457,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'M',
           qty: 1,
           lineTotal: 55000,
@@ -533,6 +564,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'S',
           qty: 1,
           lineTotal: 35000,
@@ -576,6 +608,7 @@ async function runTests() {
       items: {
         create: [{
           productId: sampleProduct.id,
+          productName: sampleProduct.name,
           size: 'S',
           qty: 1,
           lineTotal: 10000,

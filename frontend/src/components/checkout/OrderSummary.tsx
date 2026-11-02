@@ -21,6 +21,14 @@ interface OrderSummaryProps {
   onReturnToCart?: () => void;
   appliedPromo?: AppliedPromo | null;
   onRemovePromo?: () => void;
+  method?: 'EWALLET' | 'CARD';
+  onCheckPaymentStatus?: () => void;
+  isCheckingStatus?: boolean;
+  statusFeedback?: {
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null;
+  onQuickTest?: () => void;
 }
 
 export function OrderSummary({
@@ -38,6 +46,11 @@ export function OrderSummary({
   onReturnToCart,
   appliedPromo,
   onRemovePromo,
+  method = 'EWALLET',
+  onCheckPaymentStatus,
+  isCheckingStatus = false,
+  statusFeedback,
+  onQuickTest,
 }: OrderSummaryProps) {
   const durationLabel = durationSeconds >= 60 ? `${Math.floor(durationSeconds / 60)} phút` : `${durationSeconds} giây`;
   const triggerCheckout = onCheckout || onPayment;
@@ -171,6 +184,75 @@ export function OrderSummary({
             )}
           </div>
         )
+      ) : method === 'EWALLET' && finalTotal > 0 ? (
+        <div className="mt-5 space-y-3">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-center">
+            <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-800">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-600"></span>
+              </span>
+              <span>Đang chờ chuyển khoản VietQR...</span>
+            </div>
+            <p className="mt-1.5 text-[11px] text-gray-600 leading-relaxed">
+              Mở App Ngân hàng quét mã bên trái và chuyển đúng <strong className="text-emerald-700 font-bold">{formatVND(finalTotal)}</strong>. Hệ thống sẽ tự động xuất hóa đơn khi SePay xác nhận.
+            </p>
+          </div>
+
+          {statusFeedback && (
+            <div
+              className={`rounded-xl p-3 text-xs font-medium border animate-fadeIn ${
+                statusFeedback.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : statusFeedback.type === 'warning'
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-red-50 text-red-800 border-red-200'
+              }`}
+            >
+              {statusFeedback.type === 'warning' && '⏳ '}
+              {statusFeedback.type === 'success' && '✅ '}
+              {statusFeedback.type === 'error' && '⚠️ '}
+              {statusFeedback.message}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={isCheckingStatus || isSubmitting}
+            onClick={onCheckPaymentStatus}
+            className="w-full rounded-full py-3.5 text-center font-bold text-white bg-primary hover:bg-primary-hover shadow-md transition-all active:scale-[0.99] flex items-center justify-center gap-2 text-sm disabled:opacity-75"
+          >
+            {isCheckingStatus ? (
+              <>
+                <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                <span>Đang kiểm tra SePay...</span>
+              </>
+            ) : (
+              <>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Tôi đã chuyển tiền (Kiểm tra lại)</span>
+              </>
+            )}
+          </button>
+
+          {onQuickTest && (
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={onQuickTest}
+                disabled={isSubmitting || isCheckingStatus}
+                className="text-xs text-gray-400 hover:text-gray-600 font-medium transition-colors hover:underline"
+              >
+                Test nhanh
+              </button>
+            </div>
+          )}
+        </div>
       ) : (
         <button
           type="button"
@@ -190,8 +272,10 @@ export function OrderSummary({
               </svg>
               Đang xử lý thanh toán...
             </span>
+          ) : finalTotal === 0 ? (
+            'Hoàn tất đơn hàng miễn phí (0đ)'
           ) : (
-            `Xác nhận trả ${formatVND(finalTotal)}`
+            `Xác nhận thanh toán Thẻ ${formatVND(finalTotal)}`
           )}
         </button>
       )}

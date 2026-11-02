@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { formatVND } from '@/lib/utils';
 
 export interface CardFormData {
@@ -17,11 +17,19 @@ export interface CardFormErrors {
   cvv?: string;
 }
 
+export interface BankInfo {
+  bankName: string;
+  accountNo: string;
+  accountName: string;
+  transferContent: string;
+}
+
 export interface CheckoutMethodsProps {
   method: 'EWALLET' | 'CARD';
   onMethodChange: (method: 'EWALLET' | 'CARD') => void;
   finalTotal: number;
   qrUrl: string;
+  bankInfo?: BankInfo;
   cardInfo: CardFormData;
   onCardInfoChange: (data: CardFormData) => void;
   cardErrors?: CardFormErrors;
@@ -51,12 +59,23 @@ export function CheckoutMethods({
   onMethodChange,
   finalTotal,
   qrUrl,
+  bankInfo,
   cardInfo,
   onCardInfoChange,
   cardErrors,
   onFillDemoCard,
   onClearCard,
 }: CheckoutMethodsProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyContent = () => {
+    if (bankInfo?.transferContent) {
+      navigator.clipboard.writeText(bankInfo.transferContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm border border-emerald-900/10">
       <h2 className="text-lg font-bold text-[#1E3932] mb-4">
@@ -74,7 +93,7 @@ export function CheckoutMethods({
               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
           }`}
         >
-          <span className="text-sm">Ví MoMo / VietQR</span>
+          <span className="text-sm">VietQR (SePay) / MoMo</span>
         </button>
 
         <button
@@ -90,27 +109,60 @@ export function CheckoutMethods({
         </button>
       </div>
 
-      {/* Chi tiết cho Tab Ví MoMo */}
+      {/* Chi tiết cho Tab Ví MoMo / VietQR */}
       {method === 'EWALLET' && (
         <div className="flex flex-col items-center rounded-xl bg-emerald-50/40 p-6 border border-emerald-100 text-center">
           <p className="text-xs uppercase tracking-wider font-extrabold text-primary mb-3">
-            Quét mã QR MoMo / Ngân Hàng
+            Quét mã VietQR chuyển khoản tự động
           </p>
 
-          <div className="relative rounded-2xl bg-white p-4 shadow-md border-2 border-primary/20">
+          <div className="relative rounded-2xl bg-white p-4 shadow-md border-2 border-primary/20 flex flex-col items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={qrUrl}
-              alt="Mã QR thanh toán BrewLite"
-              className="h-48 w-48 object-contain rounded-lg"
+              alt="Mã QR thanh toán SePay"
+              className="h-52 w-52 object-contain rounded-lg"
             />
-            <div className="mt-2 text-[11px] font-semibold text-gray-500">
-              Số tiền: <strong className="text-primary">{formatVND(finalTotal)}</strong>
+            <div className="mt-2 text-[12px] font-semibold text-gray-700">
+              Số tiền: <strong className="text-primary text-sm">{formatVND(finalTotal)}</strong>
             </div>
           </div>
 
+          {/* Khung chi tiết tài khoản ngân hàng SePay */}
+          {bankInfo && (
+            <div className="mt-4 w-full max-w-sm rounded-xl bg-white p-3.5 text-left border border-emerald-200/80 shadow-sm text-xs space-y-2">
+              <div className="flex justify-between items-center text-gray-600">
+                <span className="font-medium">Ngân hàng:</span>
+                <strong className="text-gray-900 font-bold">{bankInfo.bankName}</strong>
+              </div>
+              <div className="flex justify-between items-center text-gray-600">
+                <span className="font-medium">Số tài khoản:</span>
+                <strong className="font-mono text-primary font-bold text-sm tracking-wide">{bankInfo.accountNo}</strong>
+              </div>
+              <div className="flex justify-between items-center text-gray-600">
+                <span className="font-medium">Chủ tài khoản:</span>
+                <strong className="text-gray-900 font-bold">{bankInfo.accountName}</strong>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-dashed border-gray-200">
+                <span className="font-medium text-gray-700">Nội dung CK:</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                    {bankInfo.transferContent}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyContent}
+                    className="text-[10px] bg-gray-100 hover:bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded border transition-colors font-medium"
+                  >
+                    {copied ? '✓ Đã chép' : 'Sao chép'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <p className="text-xs text-gray-600 mt-4 max-w-xs">
-            Mở ứng dụng <strong>MoMo</strong> hoặc bất kỳ <strong>App Ngân Hàng</strong> để quét mã, hoặc bấm nút <strong className="text-primary">Xác nhận thanh toán</strong> bên dưới để hoàn tất ngay.
+            Mở bất kỳ <strong>App Ngân Hàng</strong> hoặc <strong>MoMo</strong> quét mã QR trên để chuyển khoản. Hệ thống SePay sẽ tự động ghi nhận tiền về trong 3 - 5 giây!
           </p>
         </div>
       )}
