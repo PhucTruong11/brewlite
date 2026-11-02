@@ -91,10 +91,10 @@ export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name);
 
   constructor(private readonly prisma: PrismaService,
-              private readonly rewardsService: RewardsService,
-              private readonly inventory: InventoryService,
-              private readonly gateway: PaymentGatewayService,
-  ) {}
+    private readonly rewardsService: RewardsService,
+    private readonly inventory: InventoryService,
+    private readonly gateway: PaymentGatewayService,
+  ) { }
 
   /** Đơn mới dùng hạn giữ nguyên liệu; đơn cũ dùng thời điểm tạo cộng hai phút. */
   private deadline(order: { createdAt: Date; reservationExpiresAt: Date | null }) {
@@ -145,7 +145,7 @@ export class CheckoutService {
     }
 
     const cleanCode = promoCode.trim().toUpperCase();
-        // Người dùng phải sở hữu mã giảm giá đã đổi bằng điểm.
+    // Người dùng phải sở hữu mã giảm giá đã đổi bằng điểm.
     await this.rewardsService.assertVoucherUsable(userId, cleanCode);
 
     // 1. Kiểm tra mã giảm giá trong cơ sở dữ liệu trước.
@@ -272,7 +272,7 @@ export class CheckoutService {
     }
 
     if (this.deadline(order).getTime() <= Date.now() &&
-        (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED)) {
+      (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED)) {
       await this.cancelExpiredOrder(orderId);
       throw new BadRequestException('Đơn hàng đã hết hạn thanh toán');
     }
@@ -306,7 +306,7 @@ export class CheckoutService {
 
       throw new BadRequestException(
         statusMessages[order.status] ??
-          `Đơn hàng đang ở trạng thái ${order.status}, không thể thanh toán`,
+        `Đơn hàng đang ở trạng thái ${order.status}, không thể thanh toán`,
       );
     }
 
