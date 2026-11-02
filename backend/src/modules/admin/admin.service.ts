@@ -29,6 +29,12 @@ function startOfToday(): Date {
     return d;
 }
 
+// Bao bì nhận diện theo mã: ly các size và ống hút.
+function isPackagingCode(code: string): boolean {
+    return code.startsWith('CUP_') || code === 'STRAW';
+}
+
+
 @Injectable()
 export class AdminService {
     constructor(private readonly prisma: PrismaService, private readonly inventory: InventoryService) { }
@@ -213,7 +219,8 @@ export class AdminService {
         return ingredient;
     }
 
-    async createIngredient(dto: CreateIngredientDto) {
+    // Kiểm tra dữ liệu một nguyên liệu và dựng dữ liệu để ghi.
+    private buildIngredientData(dto: CreateIngredientDto): Prisma.IngredientCreateInput {
         if (dto.trackStock && dto.onHand == null) {
             throw new BadRequestException('Nguyên liệu quản lý tồn phải có tồn ban đầu');
         }
@@ -237,24 +244,26 @@ export class AdminService {
 
         const lowStockThreshold = dto.lowStockThreshold == null
             ? null
-            : this.ingredientAmount(
-                dto.lowStockThreshold, dto.unit, 'Ngưỡng cảnh báo', true,
-            );
+            : this.ingredientAmount(dto.lowStockThreshold, dto.unit, 'Ngưỡng cảnh báo', true);
+
+        return {
+            code: dto.code,
+            name: dto.name,
+            unit: dto.unit,
+            trackStock: dto.trackStock,
+            onHand,
+            reserved: dto.trackStock ? new Prisma.Decimal(0) : null,
+            packageQuantity,
+            lowStockThreshold,
+            isActive: dto.isActive ?? true,
+        };
+    }
+
+    async createIngredient(dto: CreateIngredientDto) {
+        const data = this.buildIngredientData(dto);
 
         try {
-            return await this.prisma.ingredient.create({
-                data: {
-                    code: dto.code,
-                    name: dto.name,
-                    unit: dto.unit,
-                    trackStock: dto.trackStock,
-                    onHand,
-                    reserved: dto.trackStock ? new Prisma.Decimal(0) : null,
-                    packageQuantity,
-                    lowStockThreshold,
-                    isActive: dto.isActive ?? true,
-                },
-            });
+            return await this.prisma.ingredient.create({ data });
         } catch (error) {
             if (
                 error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -424,6 +433,23 @@ export class AdminService {
                 );
             }
 
+            // Topping là nguyên liệu đi kèm: đúng một nguyên liệu, chỉ chỉnh định lượng.
+            // Không tự chọn hay xóa dòng khi dữ liệu hiện có không đúng một dòng.
+            if ('toppingId' in target) {
+                if (current.length !== 1) {
+                    throw new BadRequestException(
+                        `Topping đang có ${current.length} nguyên liệu trong công thức. Cần xử lý dữ liệu để còn đúng một nguyên liệu trước khi chỉnh định lượng`,
+                    );
+                }
+
+                if (
+                    dto.ingredients.length !== 1 ||
+                    dto.ingredients[0].ingredientId !== current[0].ingredientId
+                ) {
+                    throw new BadRequestException('Topping chỉ được chỉnh định lượng, không đổi nguyên liệu');
+                }
+            }
+
             // Giữ trạng thái nguyên liệu ổn định trong lúc kiểm tra và lưu.
             await tx.$queryRaw`
                 SELECT "id" FROM "ingredients"
@@ -499,38 +525,6 @@ export class AdminService {
                         }
                     }
                 }
-
-                // Các size dùng cùng nguyên liệu pha chế, ngoại trừ loại ly.
-                const composition = ingredients
-                    .filter((ingredient) => !ingredient.code.startsWith('CUP_'))
-                    .map((ingredient) => ingredient.id)
-                    .sort()
-                    .join('|');
-
-                const otherRecipes = await tx.recipe.findMany({
-                    where: {
-                        productId: target.productId,
-                        size: { not: target.size },
-                    },
-                    include: { ingredient: true },
-                });
-
-                for (const size of Object.values(ProductSize)) {
-                    const entries = otherRecipes.filter((entry) => entry.size === size);
-                    if (!entries.length) continue;
-
-                    const otherComposition = entries
-                        .filter((entry) => !entry.ingredient.code.startsWith('CUP_'))
-                        .map((entry) => entry.ingredientId)
-                        .sort()
-                        .join('|');
-
-                    if (composition !== otherComposition) {
-                        throw new BadRequestException(
-                            `Thành phần pha chế phải giống size ${size}; chỉ thay đổi định lượng và ly đúng size`,
-                        );
-                    }
-                }
             }
 
             // Xóa và tạo lại cùng transaction, lỗi thì giữ nguyên công thức cũ.
@@ -555,8 +549,40 @@ export class AdminService {
     // QUẢN LÝ TỒN KHO SẢN PHẨM CŨ.
 
     // Nguồn dữ liệu chỉ đọc cho giao diện nguyên liệu và công thức.
+    // Trả thêm usage (suy ra từ bảng recipes và mã bao bì), không cần thêm cột phân loại.
     async listIngredients() {
-        return this.prisma.ingredient.findMany({ orderBy: { name: 'asc' } });
+        const [ingredients, inProducts, inToppings] = await Promise.all([
+            this.prisma.ingredient.findMany({ orderBy: { name: 'asc' } }),
+            this.prisma.recipe.groupBy({
+                by: ['ingredientId'],
+                where: { productId: { not: null } },
+                _count: { _all: true },
+            }),
+            this.prisma.recipe.groupBy({
+                by: ['ingredientId'],
+                where: { toppingId: { not: null } },
+                _count: { _all: true },
+            }),
+        ]);
+
+        const productIds = new Set(inProducts.map((row) => row.ingredientId));
+        const toppingIds = new Set(inToppings.map((row) => row.ingredientId));
+
+        return ingredients.map((ingredient) => {
+            const packaging = isPackagingCode(ingredient.code);
+            const inProduct = productIds.has(ingredient.id);
+            const inTopping = toppingIds.has(ingredient.id);
+
+            return {
+                ...ingredient,
+                usage: {
+                    drink: inProduct && !packaging,
+                    topping: inTopping,
+                    packaging,
+                    unused: !inProduct && !inTopping,
+                },
+            };
+        });
     }
 
     async listProductRecipe(productId: string, size: ProductSize) {
