@@ -119,7 +119,7 @@ export class AdminService {
         return { counts, todayOrders, todayRevenue: revenue._sum.total ?? 0 };
     }
 
-    // Đổi trạng thái đơn (giữ nguyên như cũ)
+    // Đổi trạng thái đơn và xử lý kho trong cùng giao dịch.
     async updateStatus(id: string, next: OrderStatus) {
         if (ADMIN_FORBIDDEN_TARGETS.includes(next)) {
             throw new BadRequestException(`Admin không được chuyển đơn sang ${next}`);
@@ -134,6 +134,13 @@ export class AdminService {
             if (!order) throw new NotFoundException(`Không tìm thấy đơn ${id}`);
 
             assertTransition(order.status, next);
+
+            // Đơn chưa thanh toán chỉ giữ nguyên liệu; khi hủy phải nhả lượng đã giữ.
+            if (next === OrderStatus.CANCELLED &&
+                (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED) &&
+                order.inventoryState === 'RESERVED') {
+                await this.inventory.release(tx, order);
+            }
 
             // Hủy đơn đã thanh toán -> hoàn kho + thu hồi điểm
             if (next === OrderStatus.CANCELLED && order.status === OrderStatus.PAID) {
