@@ -1,6 +1,3 @@
-// DTO (Data Transfer Object): Khai báo cấu trúc dữ liệu Giỏ hàng mà Frontend gửi lên.
-// class-validator sẽ tự động kiểm tra, nếu sai format → trả về HTTP 400 ngay tại cửa.
-
 import {
     IsArray,
     IsIn,
