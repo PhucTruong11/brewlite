@@ -57,13 +57,10 @@ export default function ProductDetailPage() {
         async function fetchData() {
             try {
                 setLoading(true);
-                // Dùng đối tượng `api` đã cấu hình sẵn địa chỉ, cookie và xử lý lỗi 401.
-                // Cách này tránh ghép sai địa chỉ máy chủ như đoạn mã cũ.
-                // Gọi song song sản phẩm và topping để giảm thời gian chờ (thay vì chờ lần lượt).
                 const toppingsPromise = api
                     .get<ApiResponse<Topping[]>>('/products/toppings')
                     .then((res) => res.data.data)
-                    .catch(() => [] as Topping[]); // lỗi topping không được làm hỏng cả trang
+                    .catch(() => [] as Topping[]);
 
                 const resProd = await api.get<ApiResponse<Product>>(`/products/${productId}`);
                 const dataProd: Product = resProd.data.data;

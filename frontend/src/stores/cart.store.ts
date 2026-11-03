@@ -22,9 +22,7 @@ interface CartStore {
   removePromo: () => void;
   setProductStocks: (stocks: Record<string, number>) => void;
 }
-// Các hàm hỗ trợ dùng trong tệp này.
 
-// Tạo khóa lưu giỏ riêng cho từng tài khoản và khách chưa đăng nhập.
 const getCartKey = (userId: string | null) => {
   return userId ? `brewlite_cart_user_${userId}` : `brewlite_cart_guest`;
 };
@@ -106,7 +104,6 @@ const resetCheckoutTimer = () => {
 const promoForItems = (promo: AppliedPromo | null, items: CartItem[]) =>
   recalculatePromo(promo, items.reduce((total, item) => total + getCartLineTotal(item), 0));
 
-// Lưu giỏ hàng và mã giảm giá vào bộ nhớ trình duyệt.
 const saveToStorage = (userId: string | null, items: CartItem[], appliedPromo: AppliedPromo | null) => {
   if (typeof window !== 'undefined') {
     const key = getCartKey(userId);
@@ -133,11 +130,9 @@ export const useCartStore = create<CartStore>((set, get) => ({
     const savedPromo = readSavedPromo(userId);
 
     if (userId) {
-      // Khi người dùng đăng nhập.
       const userKey = getCartKey(userId);
       let userItems = readCartItems(userKey);
 
-      // Gộp món trong giỏ khách vào giỏ tài khoản rồi xóa giỏ khách.
       if (guestItems.length > 0) {
         userItems = mergeCartItems(userItems, guestItems);
       }
@@ -151,7 +146,6 @@ export const useCartStore = create<CartStore>((set, get) => ({
       }
       set({ currentUserId: userId, items: userItems, appliedPromo });
     } else {
-      // Khi là khách chưa đăng nhập hoặc người dùng vừa đăng xuất.
       const appliedPromo = promoForItems(savedPromo, guestItems);
       set({ currentUserId: null, items: guestItems, appliedPromo });
       saveToStorage(null, guestItems, appliedPromo);

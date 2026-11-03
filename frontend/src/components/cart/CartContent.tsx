@@ -89,7 +89,6 @@ export function CartContent({ onClose }: CartContentProps) {
   });
   const isOverStock = inventoryCheck.data?.available === false;
 
-  // Lấy danh sách mã ưu đãi đang hoạt động khi mở giỏ hàng.
   useEffect(() => {
     const fetchPromos = async () => {
       try {
@@ -106,7 +105,6 @@ export function CartContent({ onClose }: CartContentProps) {
     fetchPromos();
   }, []);
 
-  // Đóng danh sách mã khi nhấn ra ngoài.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -130,7 +128,6 @@ export function CartContent({ onClose }: CartContentProps) {
     setErrorMsg(null);
     let navigated = false;
     try {
-      // Tạo đơn và giữ nguyên liệu trước khi mở trang QR để hạn hai phút bắt đầu đúng lúc.
       const cartBeforeCheck = JSON.stringify(useCartStore.getState().items.map(toOrderItem));
       const latest = await inventoryCheck.refetch();
       if (!latest.data?.available) {
@@ -171,7 +168,6 @@ export function CartContent({ onClose }: CartContentProps) {
     router.push('/auth/login?redirect=/cart');
   };
 
-  // Áp dụng mã giảm giá.
   const handleApplyPromo = async (codeToApply?: string) => {
     const targetCode = codeToApply || promoCode;
     if (!targetCode.trim()) {
