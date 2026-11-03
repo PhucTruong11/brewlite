@@ -4,13 +4,17 @@
 
 Khách hàng có thể xem menu, chọn size và topping, quản lý giỏ, thanh toán và theo dõi đơn nhận tại quầy. Dự án đang hoàn thiện Assignment 1 và chuẩn bị các yêu cầu của Assignment 2.
 
+**Bản deploy qua HTTPS:** [Web](https://brewlite-frontend.vercel.app/) · [Admin](https://brewlite-frontend.vercel.app/admin) · [API](https://brewlite-api-omni.onrender.com/api) · [Menu qua frontend](https://brewlite-frontend.vercel.app/api/products).
+
+Project vẫn chạy local bằng Node hoặc Docker Compose. **DB Docker local và DB Supabase độc lập, không tự đồng bộ dữ liệu.** Xem phần 4 để chạy local và phần 6 để cấu hình bản deploy.
+
 ![Công nghệ, logo và luồng kết nối BrewLite](docs/assets/tech-stack-flow.svg)
 
 Sơ đồ công nghệ thể hiện các thành phần đang dùng và đường kết nối runtime/CI. Logo vector được nhúng trong SVG, nguồn [Simple Icons](https://github.com/simple-icons/simple-icons).
 
 ## 1. Hiện trạng dự án
 
-Cập nhật theo mã nguồn ngày 28/10/2026. “Đã có” nghĩa là đã có mã nguồn hoặc cấu hình, không đồng nghĩa đã nghiệm thu đầy đủ.
+Cấu hình local/deploy và URL được kiểm tra ngày 03/11/2026. “Đã có” nghĩa là đã có mã nguồn hoặc cấu hình, không đồng nghĩa đã nghiệm thu đầy đủ các nghiệp vụ.
 
 | Hạng mục | Hiện trạng |
 | --- | --- |
@@ -22,7 +26,7 @@ Cập nhật theo mã nguồn ngày 28/10/2026. “Đã có” nghĩa là đã c
 | Kiểm thử | Unit test frontend/backend và integration test nguyên liệu trên DB thử riêng đã có; browser E2E vẫn chưa hoàn thiện |
 | CI | Workflow PR vào main chạy `npm ci`, Prisma generate, lint, build và unit test ở cả hai ứng dụng; chưa bật integration/E2E và required checks |
 | Docker | Đã có Dockerfile cho web/API và hai file Compose ghép thành web/API/PostgreSQL; build và chạy local đã kiểm tra |
-| Production/CD | Chưa có cấu hình CD và URL production được xác nhận trong tài liệu |
+| Production/CD | Đã deploy web lên Vercel, API lên Render, DB trên Supabase; cấu hình local/cloud riêng. Kết quả kiểm tra và quy trình cập nhật ở phần 6 |
 | Tài liệu Assignment 2 | Đã tạo khung docs; nội dung Task 1–3, truy vết và vận hành cần bổ sung |
 
 Các việc còn lại gồm API ghi cho Nguyên liệu/Công thức, kiểm thử browser E2E, xác minh CI trên GitHub và cấu hình CD. Xem [luồng hệ thống](PROJECT_FLOW.md), [plan nguyên liệu](INVENTORY_RECIPE_PLAN.md) và [kế hoạch Assignment 2](ASSIGNMENT2_PLAN.md).
@@ -39,7 +43,7 @@ Sơ đồ SVG này được vẽ trước đợt chuyển sang tồn nguyên li�
 | Trạng thái giao diện | Zustand cho giỏ hàng; TanStack Query cho dữ liệu API |
 | Backend | NestJS 12, TypeScript, Prisma 6 |
 | Xác thực và validate | Passport JWT, cookie HttpOnly, bcrypt, class-validator |
-| Dữ liệu | PostgreSQL 16 |
+| Dữ liệu | PostgreSQL 16 trong Docker local; PostgreSQL managed trên Supabase khi deploy |
 | Kiểm tra mã nguồn | ESLint ở frontend; Oxlint và Vitest ở backend |
 | Công cụ dự án | Git, GitHub Actions, Docker Compose |
 
@@ -111,9 +115,9 @@ Tạo frontend/.env.local:
 NEXT_PUBLIC_API_URL=http://localhost:3001/api
 ~~~
 
-Code hiện đọc backend/.env và frontend/.env.local riêng. Repository chưa có backend/.env.example hoặc frontend/.env.example. File .env.example ở gốc cần được đồng bộ: Compose đang mở cổng 5433 trên máy host, và backend đọc PORT thay vì BACKEND_PORT. JWT hiện có thời hạn 7 ngày trong AuthModule, chưa đọc JWT_EXPIRES_IN từ file mẫu.
+Code đọc `backend/.env` và `frontend/.env.local` riêng. Mẫu backend local nằm ở [backend/.env.example](backend/.env.example), mẫu deploy API ở [backend/.env.production.example](backend/.env.production.example). File `.env.example` ở gốc là mẫu cũ: dùng `PORT` và cổng DB local `5433` theo hướng dẫn này thay vì `BACKEND_PORT`/`5432` trong mẫu cũ. JWT hiện có thời hạn 7 ngày trong AuthModule, chưa đọc `JWT_EXPIRES_IN`.
 
-Để đăng ký và nhận OTP qua email, bổ sung MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASSWORD và MAIL_FROM vào backend/.env theo tài khoản SMTP của nhóm. Không commit file môi trường hay thông tin SMTP thật.
+Để đăng ký và nhận OTP ở local, giữ `MAIL_PROVIDER=smtp` (cũng là mặc định nếu bỏ biến này) và cấu hình `MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASSWORD`, `MAIL_FROM` trong `backend/.env`. Bản deploy dùng Brevo HTTPS API với `MAIL_PROVIDER=brevo`; xem phần 6. Không commit file môi trường hoặc secret thật vào file `.example`.
 
 ### 4.3. Khởi động PostgreSQL
 
@@ -308,18 +312,105 @@ Nếu lint đọc cả output .next-e2e/coverage, cần chuẩn hóa ignore ho�
 
 ## 6. CI, Docker và triển khai
 
-[CI hiện tại](.github/workflows/ci.yml) chạy khi mở/cập nhật PR vào main:
+### 6.1. CI và nhánh triển khai
 
-- Backend: install, generate Prisma client, lint, build, unit test.
-- Frontend: install, lint, build, unit test.
+[CI hiện tại](.github/workflows/ci.yml) chạy khi mở/cập nhật PR vào main: backend install, Prisma generate, lint, build, unit test; frontend install, lint, build, unit test. Branch protection và required checks trên GitHub cần được xác minh riêng.
 
-Task 4 vẫn cần bật required checks trong quy tắc chặn merge. Workflow hiện dùng Node 22 và `npm ci`, cùng phiên bản Node chính và cách cài dependency với Dockerfile. Cấu hình branch protection, issue board và lịch sử chạy trên GitHub cần được xác minh riêng.
+Mã backend cho Supabase và Brevo được phát hành từ nhánh `deploy/render-api`; sau khi merge PR, cấu hình Render **Build & Deploy → Branch = main**. Vercel dùng production branch `main`. Kiểm tra nhánh và commit trong dashboard hosting; chỉ kiểm tra URL không xác nhận được deployment đang lấy commit nào. GitHub Actions hiện chưa có workflow CD chạy thực tế; các file `.yml.example` là mẫu. Việc tự deploy theo Git phụ thuộc cấu hình từng project trên Render/Vercel. Xem [hướng dẫn CI/CD](.github/CI_CD_GUIDE.md).
 
-Assignment 1 đã yêu cầu Compose chạy web/API/DB ở Task 9 và test nghiệp vụ ở Task 10. Compose local và migration nền cho nguyên liệu đã chạy được, nhưng Assignment 2 vẫn cần hoàn thiện quy trình migration, health endpoint chuyên dụng, integration/E2E và CD. Kiểm thử lại trên container, rồi phát hành khi các kiểm tra bắt buộc đạt. Sau deploy vẫn phải chạy smoke test.
+### 6.2. Local và deploy dùng môi trường riêng
 
-Đã có [mẫu CI](.github/workflows/ci.yml.example), [mẫu CD](.github/workflows/cd.yml.example) và [hướng dẫn bổ sung/kích hoạt](.github/CI_CD_GUIDE.md). Các file `.yml.example` chưa chạy trên GitHub Actions; hoàn thành test frontend, Docker và cấu hình triển khai theo hướng dẫn trước khi bật từng workflow.
+| Thành phần | Local: Node trực tiếp | Local: Docker Compose | Bản deploy |
+| --- | --- | --- | --- |
+| Web | `http://localhost:3000` | `http://localhost:3000` | [Vercel HTTPS](https://brewlite-frontend.vercel.app/) |
+| Admin | `http://localhost:3000/admin` | `http://localhost:3000/admin` | [Admin HTTPS](https://brewlite-frontend.vercel.app/admin) |
+| API | `http://localhost:3001/api` | Cùng URL host; web chuyển tiếp tới `api:3001` | [Render API](https://brewlite-api-omni.onrender.com/api) |
+| DB | PostgreSQL Docker qua `localhost:5433` | PostgreSQL qua `db:5432` | Supabase Session pooler, cổng 5432, TLS |
+| OTP | SMTP, `MAIL_PROVIDER=smtp` hoặc bỏ biến | SMTP theo `backend/.env` | Brevo HTTPS API, `MAIL_PROVIDER=brevo` |
+| Cấu hình API | `backend/.env` | `.env` và biến ghi đè trong Compose | Environment Variables của Render |
+| Cấu hình web | `frontend/.env.local` | Build args và environment trong Compose | Environment Variables Production của Vercel |
 
-Chưa có URL production hoặc hướng dẫn rollback đã được kiểm chứng. Những thông tin này sẽ được cập nhật vào [docs/deployment.md](docs/deployment.md) sau khi nhóm chọn nền tảng và triển khai thực tế.
+**Local vẫn hoạt động khi bản deploy đang chạy, và ngược lại.** Dữ liệu local đã được sao chép một lần lên Supabase ngày 03/11/2026, giữ ID, vai trò, password hash và dữ liệu nghiệp vụ. Đăng ký, tạo đơn, sửa tồn kho hoặc đổi mật khẩu sau đó chỉ ảnh hưởng DB mà API đang kết nối. Merge/push code, build image và redeploy không đồng bộ hai DB. Tài khoản vừa đăng ký ở local không tự xuất hiện trên cloud.
+
+Chạy lại Compose hằng ngày tại thư mục gốc repo, **sau khi DB đã được chuẩn bị theo phần 4**:
+
+~~~powershell
+docker compose up -d --build --wait
+docker compose ps
+~~~
+
+File `docker-compose.yml` ở gốc gộp hai file trong `docker/`. Cách dùng `$brewCompose` ở phần 4 cũng cho cùng ba dịch vụ. Không chạy đồng thời web/API bằng Node và Compose vì tranh cổng. Local tiếp tục dùng `backend/.env`; không đổi DB local thành URL Supabase chỉ để chạy hoặc build local.
+
+### 6.3. Cấu hình API trên Render
+
+Render build riêng Dockerfile backend; không chạy toàn bộ Compose và không tạo PostgreSQL container. DB đã được quản lý riêng trên Supabase.
+
+| Mục | Giá trị |
+| --- | --- |
+| Root Directory | `backend` |
+| Language | Docker |
+| Dockerfile Path | `./Dockerfile` |
+| Docker Build Context | `.` |
+| Docker Command | Để trống, dùng CMD của Dockerfile |
+| Region | Frankfurt, gần DB Supabase hiện ở châu Âu |
+| Instance | Free |
+| Health Check Path | `/api/products` |
+
+Đặt các biến sau trong **Environment của API Render**, không đưa vào frontend:
+
+~~~dotenv
+NODE_ENV=production
+DATABASE_URL="postgresql://postgres.PROJECT_REF:URL_ENCODED_PASSWORD@POOLER_HOST:5432/postgres?sslmode=require"
+FRONTEND_URL=https://brewlite-frontend.vercel.app
+JWT_SECRET=<secret ngẫu nhiên riêng cho production>
+MAIL_PROVIDER=brevo
+BREVO_API_KEY=<Brevo REST API key>
+BREVO_SENDER_EMAIL=<sender đã xác minh>
+BREVO_SENDER_NAME=BrewLite
+~~~
+
+Render cung cấp `PORT`; API đọc biến đó. `DATABASE_URL` lấy từ Supabase **Session pooler**, có TLS và mật khẩu được URL-encode. Dùng Brevo **API key**, không dùng SMTP key; sender phải được xác minh. Kiểm tra key/sender bằng `node scripts/check-brevo.mjs` từ `backend`; script chỉ đọc metadata, không gửi email. Chi tiết gửi OTP và xử lý lỗi nằm ở [backend/README.md](backend/README.md).
+
+File `backend/.env.production` trên máy chỉ phục vụ script DB và kiểm tra Brevo; NestJS không tự đọc file này khi chạy `start:prod`. Hosting phải được cấu hình environment riêng. File thật được Git bỏ qua và không nằm trong Docker build context; chỉ commit các file `.example` chứa giá trị mẫu.
+
+### 6.4. Cấu hình frontend trên Vercel
+
+Dùng Root Directory `frontend`, preset Next.js, build command mặc định và output mặc định. Vercel cấp URL HTTPS; frontend không cần Docker Compose. Trong Environment Variables, chọn **Config**, môi trường **Production**:
+
+~~~dotenv
+NEXT_PUBLIC_API_URL=/api
+API_INTERNAL_URL=https://brewlite-api-omni.onrender.com
+~~~
+
+Lưu rồi **redeploy frontend** để áp dụng biến ở thời điểm build. `API_INTERNAL_URL` dùng base URL API, không thêm `/api` ở cuối. Trình duyệt gọi cùng domain Vercel tại `/api/...`, Next.js chuyển tiếp đến `https://brewlite-api-omni.onrender.com/api/...`. Cách này giữ cookie đăng nhập qua cùng origin; production dùng cookie `HttpOnly`, `Secure`, `SameSite=Lax`. Frontend không chứa `DATABASE_URL`, `JWT_SECRET` hoặc Brevo key.
+
+### 6.5. Cập nhật DB, kiểm tra và giới hạn vận hành
+
+Supabase hiện đã có schema và dữ liệu. Khi có migration mới, sao lưu và kiểm tra migration trước, rồi chạy từ `backend` với file cấu hình cloud đúng:
+
+~~~powershell
+node scripts/supabase-db.mjs status
+node scripts/supabase-db.mjs migrate
+~~~
+
+Không seed hoặc chép lại local mỗi lần deploy. Công cụ `copy-local-to-supabase.mjs` chỉ dành cho lần nhập vào DB cloud trống và sẽ từ chối ghi đè dữ liệu đang có; xem [hướng dẫn DB](backend/README.md). Kiểm tra lại quyền RLS/Data API khi thêm bảng mới. Đổi nhánh hoặc rollback code không tự rollback dữ liệu/migration DB; quy trình khôi phục DB vẫn cần nghiệm thu riêng.
+
+Kiểm tra production ngày **03/11/2026**:
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| Trang chủ và trang admin Vercel | HTTP 200 |
+| `GET /api` trực tiếp trên Render | HTTP 200 |
+| `GET /api/products` trực tiếp Render và qua Vercel | HTTP 200, cùng 6 món |
+| Đăng nhập admin qua Vercel | HTTP 200, role ADMIN |
+| Cookie đăng nhập | Có HttpOnly, Secure, SameSite=Lax |
+| `GET /api/auth/me` và `GET /api/admin/orders/counts` có phiên đăng nhập | HTTP 200 |
+| Endpoint admin khi chưa đăng nhập | HTTP 401 |
+| Đăng xuất qua Vercel | HTTP 200 |
+
+Đây là kiểm tra HTTP và phiên cookie; chưa thay thế kiểm thử browser E2E, đặt đơn, nhận OTP thực tế hoặc khôi phục backup. Không ghi mật khẩu/tài khoản cá nhân, token hay key thật vào README.
+
+[Render Free](https://render.com/docs/free) ngủ sau 15 phút không có traffic; request đầu có thể mất khoảng một phút để đánh thức API. Cron trong tiến trình NestJS không chạy khi instance ngủ, nên gói Free không bảo đảm xử lý đơn hết hạn liên tục. [Supabase Free](https://supabase.com/pricing) có thể pause sau một tuần không hoạt động; kiểm tra dashboard khi API báo mất kết nối DB. Gói free phù hợp demo đồ án trong hạn mức, cần đánh giá lại nếu phục vụ liên tục.
 
 ## 7. Tài liệu
 
