@@ -11,17 +11,12 @@ type OrderWithSnapshots = {
   items: { recipeSnapshot: Prisma.JsonValue | null }[];
 };
 
-// Đơn mới được giữ nguyên liệu tối đa hai phút để khách hoàn tất thanh toán.
 export const RESERVATION_DURATION_MS = 2 * 60 * 1000;
 
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Đối chiếu món, cỡ ly và topping với cơ sở dữ liệu; tính lại giá và gom nguyên liệu của toàn bộ giỏ.
-   * Kết quả gồm cả công thức chụp cho từng dòng đơn. Hàm này chỉ đọc, chưa giữ hay trừ kho.
-   */
   async prepareCart(items: CreateOrderItemDto[], db: Database = this.prisma) {
     if (!items?.length) throw new BadRequestException('Giỏ hàng không được rỗng');
 
@@ -123,7 +118,6 @@ export class InventoryService {
     });
     if (!Number.isSafeInteger(subtotal)) throw new BadRequestException('Giá trị giỏ hàng không hợp lệ');
 
-    // Lượng có thể bán = tồn thực - lượng đã giữ; nước không quản tồn nên bỏ qua.
     const shortages = [...required.entries()].flatMap(([ingredientId, quantity]) => {
       const ingredient = ingredientById.get(ingredientId)!;
       if (!ingredient.trackStock) return [];
@@ -140,16 +134,11 @@ export class InventoryService {
     return { subtotal, orderItems, required, ingredientById, shortages };
   }
 
-  /** Trả kết quả kiểm tra cho giỏ hàng; không tạo đơn và không cập nhật nguyên liệu. */
   async validateCart(items: CreateOrderItemDto[]) {
     const result = await this.prepareCart(items);
     return { available: result.shortages.length === 0, shortages: result.shortages, subtotal: result.subtotal };
   }
 
-  /**
-   * Khi tạo đơn, chỉ tăng lượng đã giữ trong cùng giao dịch với bản ghi đơn hàng.
-   * Cập nhật có điều kiện chặn hai đơn đồng thời giữ vượt kho; thiếu một nguyên liệu thì giao dịch bị hủy.
-   */
   async reserve(db: Prisma.TransactionClient, cart: Awaited<ReturnType<InventoryService['prepareCart']>>) {
     for (const [ingredientId, quantity] of [...cart.required.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       if (!cart.ingredientById.get(ingredientId)?.trackStock) continue;
@@ -167,7 +156,6 @@ export class InventoryService {
     }
   }
 
-  /** Gộp nguyên liệu từ công thức đã chụp của đơn, không đọc công thức hiện tại. */
   private requirementsFromSnapshots(order: OrderWithSnapshots) {
     const quantities = new Map<string, Prisma.Decimal>();
     for (const item of order.items) {
@@ -185,7 +173,6 @@ export class InventoryService {
     return [...quantities.entries()].sort(([a], [b]) => a.localeCompare(b));
   }
 
-  /** Thanh toán thành công: giảm cả tồn thực và lượng đã giữ, rồi đánh dấu đã sử dụng. */
   async consume(db: Prisma.TransactionClient, order: OrderWithSnapshots) {
     if (order.inventoryState !== InventoryState.RESERVED) throw new ConflictException('Đơn hàng không còn nguyên liệu đã giữ');
     for (const [id, quantity] of this.requirementsFromSnapshots(order)) {
@@ -201,7 +188,6 @@ export class InventoryService {
     await db.order.update({ where: { id: order.id }, data: { inventoryState: InventoryState.CONSUMED } });
   }
 
-  /** Đơn chưa trả tiền bị hủy/hết hạn: trả lượng đã giữ, không thay đổi tồn thực. */
   async release(db: Prisma.TransactionClient, order: OrderWithSnapshots) {
     if (order.inventoryState !== InventoryState.RESERVED) return;
     for (const [id, quantity] of this.requirementsFromSnapshots(order)) {
@@ -217,7 +203,6 @@ export class InventoryService {
     await db.order.update({ where: { id: order.id }, data: { inventoryState: InventoryState.RELEASED } });
   }
 
-  /** Quản trị viên hủy đơn đã trả tiền: cộng lại tồn thực theo công thức đã chụp của đơn. */
   async restore(db: Prisma.TransactionClient, order: OrderWithSnapshots) {
     if (order.inventoryState !== InventoryState.CONSUMED) return;
     for (const [id, quantity] of this.requirementsFromSnapshots(order)) {

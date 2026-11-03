@@ -14,10 +14,6 @@ export class OrdersService {
         private readonly inventory: InventoryService,
     ) { }
 
-    /**
-     * Tạo đơn từ giỏ của người đã đăng nhập. Giá và nguyên liệu được tính lại từ cơ sở dữ liệu,
-     * không tin số tiền do trình duyệt gửi lên. Đơn mới chờ thanh toán và giữ nguyên liệu hai phút.
-     */
     async create(dto: CreateOrderDto, userId: string) {
         if (!userId) {
             throw new UnauthorizedException('Vui lòng đăng nhập để đặt hàng');
@@ -26,14 +22,12 @@ export class OrdersService {
             throw new BadRequestException('Giỏ hàng không được rỗng');
         }
 
-        // Kiểm tra sớm để báo nguyên liệu thiếu trước khi bắt đầu giao dịch tạo đơn.
         const preview = await this.inventory.prepareCart(dto.items);
         if (preview.shortages.length) {
             throw new BadRequestException(`Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`);
         }
         const calculatedTotal = preview.subtotal;
 
-        // Kiểm tra mã giảm giá và tính lại số tiền phải trả.
         let finalTotal = calculatedTotal;
         let finalDiscount = 0;
 
@@ -48,8 +42,6 @@ export class OrdersService {
             finalTotal -= finalDiscount;
         }
 
-        // Kiểm tra lại ngay trong giao dịch: khách khác có thể vừa giữ nguyên liệu sau lần kiểm tra đầu.
-        // Nếu giữ nguyên liệu hoặc lưu đơn thất bại, cả hai thay đổi đều được hoàn tác.
         const order = await this.prisma.$transaction(async (tx) => {
             const cart = await this.inventory.prepareCart(dto.items, tx);
             if (cart.subtotal !== calculatedTotal) {
@@ -81,7 +73,6 @@ export class OrdersService {
         return order;
     }
 
-    /** Chỉ lấy lịch sử đơn của tài khoản đang đăng nhập, mới nhất trước. */
     async findAllByUser(userId: string) {
         if (!userId) {
             throw new UnauthorizedException('Vui lòng đăng nhập để xem đơn hàng');
@@ -89,7 +80,7 @@ export class OrdersService {
 
         const orders = await this.prisma.order.findMany({
             where: { userId },
-            orderBy: { createdAt: 'desc' }, // Đơn mới nhất lên đầu
+            orderBy: { createdAt: 'desc' },
             include: {
                 items: {
                     include: { product: { select: { name: true, imageUrl: true } } },
@@ -105,7 +96,6 @@ export class OrdersService {
         }));
     }
 
-    /** Lấy chi tiết đơn và thanh toán sau khi xác nhận đơn thuộc về tài khoản này. */
     async findOne(id: string, userId: string) {
         if (!userId) {
             throw new UnauthorizedException('Vui lòng đăng nhập để xem đơn hàng');
