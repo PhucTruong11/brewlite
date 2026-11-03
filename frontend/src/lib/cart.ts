@@ -59,7 +59,6 @@ export function toOrderItem(item: CartItem) {
     productId: item.productId || item.id,
     size: item.size,
     qty: item.quantity,
-    // API dùng mỗi phần topping là một tên trong mảng, kể cả tên lặp lại.
     toppings: getToppingCounts(item.toppings).flatMap(([name, quantity]) =>
       Array<string>(quantity).fill(name),
     ),
