@@ -5,6 +5,7 @@ dist
 build
 out
 coverage
+.backups
 .git
 .env
 .env.*
