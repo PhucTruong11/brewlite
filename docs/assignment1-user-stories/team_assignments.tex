@@ -1,0 +1,56 @@
+% !TEX program = xelatex
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T5]{fontenc}
+\else
+  \usepackage{fontspec}
+  \setmainfont{Times New Roman}
+\fi
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\geometry{left=25mm,right=25mm,top=23mm,bottom=23mm}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\newcommand{\assignmentrow}[3]{%
+  \parbox[c][22mm][c]{35mm}{#1} &
+  \parbox[c][22mm][c]{74mm}{#2} &
+  \parbox[c][22mm][c]{33mm}{\raggedright #3} \\}
+
+\begin{document}
+\begin{center}
+  {\Large\bfseries BREWLITE}\\[5pt]
+  {\large Bảng phân công công việc}\\[3pt]
+  {Assignment 1 -- Công nghệ Phần mềm}
+\end{center}
+
+\vspace{7mm}
+\begin{center}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}p{35mm}@{\hspace{7mm}}p{74mm}@{\hspace{7mm}}p{33mm}@{}}
+\toprule
+\parbox[c][15mm][c]{35mm}{\centering\textbf{Họ và tên}} &
+\parbox[c][15mm][c]{74mm}{\centering\textbf{Nhiệm vụ}} &
+\parbox[c][15mm][c]{33mm}{\centering\textbf{Tỉ lệ đóng góp nhiệm vụ}} \\
+\midrule
+\assignmentrow{Trương Trọng Phúc}{Khởi tạo cấu trúc dự án; xây dựng giỏ hàng và API tạo đơn hàng. (Task 1, 5, 6)}{Task 1 (100\%)
+Task 5 (100\%)
+Task 6 (100\%)}
+\assignmentrow{Chế Văn Nam}{Xây dựng thanh toán Ví/Thẻ, xử lý kết quả và chống ghi nhận thanh toán lặp (Task 8).}{Task 8 (100\%)}
+\assignmentrow{Đỗ Đạt}{Kiểm soát tồn kho; xây dựng Order State Machine (Task 10.1, 10.2, 10.3).}{Task 10 (75\%)}
+\assignmentrow{Lại Đình Nguyên}{Xây dựng API danh sách sản phẩm và giao diện Menu (Task 2,3); thêm voucher trong admin (Task 10.4).}{Task 2 (100\%)
+Task 3 (100\%)
+Task 10.4 (12.5\%)}
+\assignmentrow{Lê Trung Hưng}{Xây dựng trang chi tiết với size/topping (Task 4); xử lý voucher trong giỏ hàng, khuyến mãi và điểm thưởng (Task 10.4).}{Task 4 (100\%)
+Task 10.4 (12.5\%)}
+\assignmentrow{Đỗ Hữu Đăng Khoa}{Xây dựng trang xác nhận, lịch sử đơn; docker-compose. (Task 9).}{Task 9 (100\%)}
+\assignmentrow{Phạm Khánh Nguyên}{Xây dựng đăng ký, đăng nhập JWT và bảo vệ các route cần xác thực (Task 7).}{Task 7 (100\%)}
+\bottomrule
+\end{tabular}
+\end{center}
+\end{document}
