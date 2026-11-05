@@ -2,6 +2,8 @@
 
 BrewLite là ứng dụng đặt đồ uống và thanh toán không tiền mặt của nhóm môn Công nghệ Phần mềm, Trường Đại học Sài Gòn. **Repository này là bản Assignment 1 chạy local**. Bản triển khai trên Vercel, Render và Supabase thuộc [repository Assignment 2](https://github.com/PhucTruong11/brewlite-assignment2); không cần cấu hình các dịch vụ đó để chạy bản này.
 
+![Công nghệ và luồng kết nối local của BrewLite](docs/assets/tech-stack-flow.svg)
+
 ## Chức năng và luồng chính
 
 - Menu có **6 đồ uống, 3 topping**; khách chọn size S/M/L và thêm món vào giỏ.
