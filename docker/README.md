@@ -1,6 +1,6 @@
 # Docker cho BrewLite
 
-Hướng dẫn chạy BrewLite local bằng Docker Compose, cập nhật ngày 28/10/2026. Mở PowerShell tại thư mục gốc `brewlite` chứa `frontend`, `backend` và `docker`; các lệnh phần 1–2 trùng với [README chính](../README.md).
+Hướng dẫn chạy BrewLite Assignment 1 local bằng Docker Compose. Mở PowerShell tại thư mục gốc `brewlite` chứa `frontend`, `backend` và `docker`; cách khởi động ngắn gọn nằm trong [README chính](../README.md).
 
 Ba dịch vụ đã có cấu hình thực tế: `db` (PostgreSQL 16), `api` (NestJS) và `web` (Next.js). `docker-compose.dev.yml` chứa DB; `docker-compose.app.yml` bổ sung API và web. Hai Dockerfile nằm trong `backend/` và `frontend/`. Đây là môi trường phát triển/demo local, chưa phải cấu hình production.
 
@@ -56,7 +56,7 @@ docker compose @brewCompose run --rm --no-deps api npx prisma migrate deploy
 docker compose @brewCompose run --rm --no-deps api npm run catalog:bootstrap
 ```
 
-Nếu DB đã có baseline, bỏ lệnh `resolve`; lần pull sau có migration mới chỉ chạy `migrate deploy`. Chỉ dùng `resolve` sau khi đã xác minh và sao lưu DB cũ. Xem [plan nguyên liệu](../INVENTORY_RECIPE_PLAN.md) để biết phần còn chờ triển khai.
+Nếu DB đã có baseline, bỏ lệnh `resolve`; lần pull sau có migration mới chỉ chạy `migrate deploy`. Chỉ dùng `resolve` sau khi đã xác minh và sao lưu DB cũ. Mô hình dữ liệu được khai báo trong [Prisma schema](../backend/prisma/schema.prisma).
 
 Sau đó bật đủ ba dịch vụ:
 
@@ -109,7 +109,7 @@ docker compose @brewCompose up -d --wait
 docker compose @brewCompose ps
 ```
 
-Không chạy lại `db seed`: seed chỉ dành cho DB trống. Migration `20261029000100_prune_legacy_catalog` xóa 17 món và 12 topping cũ, giữ tên/ảnh món trong lịch sử đơn; sao lưu DB trước khi áp trên máy của mỗi thành viên. Chỉ chạy `catalog:bootstrap` một lần khi chuyển DB sang danh mục nguyên liệu; script không reset đơn/tồn nhưng bật lại 6 món và 3 topping mẫu. `inventory:demo-stock` chỉ dành cho DB demo muốn nạp nguyên liệu đang có tồn 0. Nếu DB cũ chưa từng dùng Prisma Migrate, làm theo nhánh baseline ở phần 2 sau khi sao lưu. Admin xem dữ liệu ở `/admin/ingredients` và `/admin/recipes`; Giao diện đã gọi API ghi, nhưng backend hiện mới có GET nên thao tác tạo/sửa/nhập kho/lưu công thức chưa hoạt động.
+Không chạy lại `db seed`: seed chỉ dành cho DB trống. Migration `20261029000100_prune_legacy_catalog` xóa 17 món và 12 topping cũ, giữ tên/ảnh món trong lịch sử đơn; sao lưu DB trước khi áp trên máy của mỗi thành viên. Chỉ chạy `catalog:bootstrap` một lần khi chuyển DB sang danh mục nguyên liệu; script không reset đơn/tồn nhưng bật lại 6 món và 3 topping mẫu. `inventory:demo-stock` chỉ dành cho DB demo muốn nạp nguyên liệu đang có tồn 0. Nếu DB cũ chưa từng dùng Prisma Migrate, làm theo nhánh baseline ở phần 2 sau khi sao lưu. Admin xem và quản lý dữ liệu ở `/admin/ingredients` và `/admin/recipes`; backend đã có API đọc/ghi, nhưng cần kiểm thử tích hợp từng thao tác giao diện trước khi demo.
 
 Với DB lần đầu chuyển sang nguyên liệu, chèn hai lệnh sau sau `migrate deploy` trong khối trên. Chỉ dùng lệnh nạp tồn thứ hai cho DB demo, khi nguyên liệu tồn 0 chưa phải trạng thái hết hàng có chủ ý:
 
@@ -162,4 +162,4 @@ Chạy Compose trên một laptop làm máy chủ. Laptop còn lại cùng mạn
 | Build web lỗi tải font Geist | Kiểm tra kết nối mạng/DNS của Docker tại thời điểm build |
 | Container bị dừng | Xem `logs`, `ps -a` và `stats` để phân biệt lỗi ứng dụng với thiếu tài nguyên |
 
-Luồng giỏ, tạo đơn và payments dùng nguyên liệu; hai trang admin đã đọc nguyên liệu/công thức thật qua API chỉ đọc. Xem [plan nguyên liệu](../INVENTORY_RECIPE_PLAN.md) cho phần API ghi còn chờ triển khai. `POST /api/cart/validate` kiểm tra toàn bộ giỏ và không trừ tồn.
+Luồng giỏ, tạo đơn và payments dùng nguyên liệu; hai trang admin đã kết nối API nguyên liệu/công thức. `POST /api/cart/validate` kiểm tra toàn bộ giỏ và không trừ tồn.

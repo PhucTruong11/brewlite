@@ -34,3 +34,6 @@ coverage/
 
 # Docker volumes
 docker/data/
+
+# Local database and document backups
+.backups/
