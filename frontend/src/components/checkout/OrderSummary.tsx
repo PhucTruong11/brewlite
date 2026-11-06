@@ -195,7 +195,7 @@ export function OrderSummary({
               <span>Đang chờ chuyển khoản VietQR...</span>
             </div>
             <p className="mt-1.5 text-[11px] text-gray-600 leading-relaxed">
-              Mở App Ngân hàng quét mã bên trái và chuyển đúng <strong className="text-emerald-700 font-bold">{formatVND(finalTotal)}</strong>. Hệ thống sẽ tự động xuất hóa đơn khi SePay xác nhận.
+              Mở App Ngân hàng quét mã bên trái và chuyển đúng <strong className="text-emerald-700 font-bold">{formatVND(finalTotal)}</strong>. Hệ thống sẽ tự động xuất hóa đơn ngay khi nhận được thanh toán.
             </p>
           </div>
 
@@ -228,7 +228,7 @@ export function OrderSummary({
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                <span>Đang kiểm tra SePay...</span>
+                <span>Đang kiểm tra giao dịch...</span>
               </>
             ) : (
               <>

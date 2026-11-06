@@ -3,7 +3,7 @@
 import React from 'react';
 
 export interface CountdownTimerProps {
-  timeLeft?: number; // số giây còn lại
+  timeLeft?: number; 
   isExpired?: boolean;
   canRenew?: boolean;
   attempt?: number;

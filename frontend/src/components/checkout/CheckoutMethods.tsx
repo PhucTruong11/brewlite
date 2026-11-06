@@ -93,7 +93,7 @@ export function CheckoutMethods({
               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
           }`}
         >
-          <span className="text-sm">VietQR (SePay) / MoMo</span>
+          <span className="text-sm">VietQR Pro / MoMo</span>
         </button>
 
         <button
@@ -120,7 +120,7 @@ export function CheckoutMethods({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={qrUrl}
-              alt="Mã QR thanh toán SePay"
+              alt="Mã QR thanh toán PayOS VietQR"
               className="h-52 w-52 object-contain rounded-lg"
             />
             <div className="mt-2 text-[12px] font-semibold text-gray-700">
@@ -128,7 +128,7 @@ export function CheckoutMethods({
             </div>
           </div>
 
-          {/* Khung chi tiết tài khoản ngân hàng SePay */}
+          {/* Khung chi tiết tài khoản ngân hàng */}
           {bankInfo && (
             <div className="mt-4 w-full max-w-sm rounded-xl bg-white p-3.5 text-left border border-emerald-200/80 shadow-sm text-xs space-y-2">
               <div className="flex justify-between items-center text-gray-600">
@@ -162,7 +162,7 @@ export function CheckoutMethods({
           )}
 
           <p className="text-xs text-gray-600 mt-4 max-w-xs">
-            Mở bất kỳ <strong>App Ngân Hàng</strong> hoặc <strong>MoMo</strong> quét mã QR trên để chuyển khoản. Hệ thống SePay sẽ tự động ghi nhận tiền về trong 3 - 5 giây!
+            Mở bất kỳ <strong>App Ngân Hàng</strong> hoặc <strong>MoMo</strong> quét mã QR trên để chuyển khoản. Cổng thanh toán sẽ tự động ghi nhận tiền về ngay lập tức!
           </p>
         </div>
       )}

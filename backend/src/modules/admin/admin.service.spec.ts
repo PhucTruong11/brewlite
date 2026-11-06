@@ -24,7 +24,7 @@ describe('AdminService', () => {
     it('danh sách admin loại đơn chờ thanh toán và chỉ giữ đơn hủy đã trả tiền', async () => {
         prisma.order.findMany.mockResolvedValue([]);
         prisma.order.count.mockResolvedValue(0);
-        prisma.$transaction.mockImplementationOnce(async (requests: Promise<unknown>[]) => Promise.all(requests));
+        (prisma.$transaction as any).mockImplementationOnce(async (requests: Promise<unknown>[]) => Promise.all(requests));
 
         await service.listOrders({ range: 'all' });
 
