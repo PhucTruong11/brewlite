@@ -212,13 +212,51 @@ model Order {
   user     User        @relation(fields: [userId], references: [id])
   items    OrderItem[]
   payments Payment[]
+  notifications OrderNotification[]
+  compensationIssued OrderCompensation? @relation("CompensationOriginal")
+  compensationSourceId String?
+  compensationSource OrderCompensation? @relation(fields: [compensationSourceId], references: [originalOrderId])
+  compensationPayosLink CompensationPayosLink?
 
   userVoucher       UserVoucher?
   pointTransactions PointTransaction[]
 
   @@index([userId])
   @@index([createdAt])
+  @@index([compensationSourceId])
   @@map("orders")
+}
+
+model OrderCompensation {
+  originalOrderId String @id
+  amount          Int
+  originalOrder   Order @relation("CompensationOriginal", fields: [originalOrderId], references: [id], onDelete: Cascade)
+  replacements    Order[]
+
+  @@map("order_compensations")
+}
+
+model CompensationPayosLink {
+  id          String @id
+  orderId     String @unique
+  orderCode   Int @unique
+  qrCodeUrl   String
+  checkoutUrl String
+  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("compensation_payos_links")
+}
+
+model OrderNotification {
+  id        String @id @default(uuid())
+  orderId   String
+  status    OrderStatus
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("order_notifications")
 }
 
 model OrderItem {

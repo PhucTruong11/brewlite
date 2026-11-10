@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm install
 
 COPY . .
 RUN npx prisma generate && npm run build

@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { useCartStore } from '@/stores/cart.store';
 import { getCartItemKey, toOrderItem } from '@/lib/cart';
 import { cartValidationMessage, validateCart } from '@/lib/validate-cart';
+import { getCompensation, replacementCheckoutHref, replacementPath } from '@/lib/order-compensation';
+import type { ApiResponse, OrderStatus } from '@/types';
 import { CartItemRow } from './CartItemRow';
 import Link from 'next/link';
 import { ShoppingBag, ArrowRight, LogIn, Loader2, AlertCircle, CheckCircle2, ChevronDown, Tag } from 'lucide-react';
@@ -40,13 +42,21 @@ interface OwnedVoucher {
 
 export function CartContent({ onClose }: CartContentProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
-  const { items, totalPrice, totalItems, appliedPromo, applyPromo, removePromo } = useCartStore();
+  const { items, totalPrice, totalItems, appliedPromo, applyPromo, removePromo, replacementSourceId, selectReplacement } = useCartStore();
 
   const [isLoading, setIsLoading] = useState(false);
   const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
+
+  // Xóa mã giảm giá nếu đang trong chế độ đền bù / đổi món
+  useEffect(() => {
+    if (replacementSourceId && appliedPromo) {
+      removePromo();
+    }
+  }, [replacementSourceId, appliedPromo, removePromo]);
 
   // Trạng thái mã giảm giá và danh sách mã có thể chọn.
   const [promoCode, setPromoCode] = useState('');
@@ -64,7 +74,7 @@ export function CartContent({ onClose }: CartContentProps) {
       const overview = 'data' in response.data ? response.data.data : response.data;
       return overview.vouchers;
     },
-    enabled: isAuthenticated && !authLoading && items.length > 0,
+    enabled: !replacementSourceId && isAuthenticated && !authLoading && items.length > 0,
     refetchOnMount: 'always',
   });
   const selectablePromos: Promotion[] = [
@@ -88,6 +98,14 @@ export function CartContent({ onClose }: CartContentProps) {
     refetchInterval: 10_000,
   });
   const isOverStock = inventoryCheck.data?.available === false;
+  const compensation = useQuery({
+    queryKey: ['replacement', user?.id, replacementSourceId],
+    queryFn: () => getCompensation(replacementSourceId!),
+    enabled: !!replacementSourceId && !!user,
+    retry: false,
+  });
+  const replacementAmount = compensation.data?.amount ?? 0;
+  const replacementDifference = (inventoryCheck.data?.subtotal ?? subtotal) - replacementAmount;
 
   useEffect(() => {
     const fetchPromos = async () => {
@@ -135,8 +153,20 @@ export function CartContent({ onClose }: CartContentProps) {
         return;
       }
       const currentCart = useCartStore.getState();
-      if (cartBeforeCheck !== JSON.stringify(currentCart.items.map(toOrderItem))) {
+      if (currentCart.replacementSourceId !== replacementSourceId ||
+          cartBeforeCheck !== JSON.stringify(currentCart.items.map(toOrderItem))) {
         setErrorMsg('Giỏ hàng vừa thay đổi. Vui lòng kiểm tra lại trước khi thanh toán.');
+        return;
+      }
+      if (replacementSourceId) {
+        const response = await api.post<ApiResponse<{ id: string; status: OrderStatus }>>(replacementPath(replacementSourceId), {
+          items: currentCart.items.map(toOrderItem),
+        });
+        const order = response.data.data;
+        await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, replacementSourceId] });
+        if (onClose) onClose();
+        router.push(replacementCheckoutHref(order.id, replacementSourceId));
+        navigated = true;
         return;
       }
       const response = await api.post<{ data: { id: string } }>('/orders', {
@@ -219,9 +249,21 @@ export function CartContent({ onClose }: CartContentProps) {
     }
   };
 
+  const replacementBanner = replacementSourceId && (
+    <div className="mb-4 w-full rounded-xl border border-primary/20 bg-primary/5 p-3 text-left text-sm">
+      <p className="font-bold text-primary">Giỏ hàng cho đơn thay thế</p>
+      {compensation.data && <p>Giá trị đền bù {replacementAmount.toLocaleString('vi-VN')}đ</p>}
+      {compensation.isError && <p role="alert" className="text-rose-700">Không tải được lượt đền bù. Mở lại từ thông báo để thử lại.</p>}
+      <button type="button" onClick={() => { setErrorMsg(null); selectReplacement(null); }} className="mt-2 font-semibold text-primary underline">
+        Quay về giỏ hàng thường
+      </button>
+    </div>
+  );
+
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
+        {replacementBanner}
         <div className="bg-gray-100 p-6 rounded-full mb-4">
           <ShoppingBag size={48} className="text-gray-300" />
         </div>
@@ -250,6 +292,7 @@ export function CartContent({ onClose }: CartContentProps) {
 
           {/* Danh sách sản phẩm */}
           <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background/50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            {replacementBanner}
             <h2 className="font-bold text-lg text-text mb-4">
               Món đã chọn ({totalItems()})
             </h2>
@@ -264,7 +307,7 @@ export function CartContent({ onClose }: CartContentProps) {
           <div className="bg-white p-4 md:p-6 border-t border-gray-100 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)]">
 
             {/* Khung nhập mã */}
-            <div className="relative mb-2">
+            {!replacementSourceId && <div className="relative mb-2">
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <input
@@ -324,10 +367,10 @@ export function CartContent({ onClose }: CartContentProps) {
                   )}
                 </div>
               </div>
-            </div>
+            </div>}
 
             {/* Thông báo kết quả Áp dụng Mã */}
-            {promoMsg && (promoMsg.type === 'error' || appliedPromo) && (
+            {!replacementSourceId && promoMsg && (promoMsg.type === 'error' || appliedPromo) && (
               <div
                 className={`mb-4 flex items-center gap-1.5 text-xs font-medium ${promoMsg.type === 'success' ? 'text-green-600' : 'text-red-500'
                   }`}
@@ -345,18 +388,20 @@ export function CartContent({ onClose }: CartContentProps) {
             <div className="space-y-3 mb-6 text-sm text-text mt-4">
               <div className="flex justify-between">
                 <span className="text-gray-500">Tạm tính</span>
-                <span className="font-bold">{subtotal.toLocaleString('vi-VN')}đ</span>
+                <span className="font-bold">{(inventoryCheck.data?.subtotal ?? subtotal).toLocaleString('vi-VN')}đ</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Giảm giá</span>
+                <span className="text-gray-500">{replacementSourceId ? 'Đền bù từ đơn gốc' : 'Giảm giá'}</span>
                 <span className="font-bold text-red-500">
-                  - {discountAmount.toLocaleString('vi-VN')}đ
+                  - {(replacementSourceId ? replacementAmount : discountAmount).toLocaleString('vi-VN')}đ
                 </span>
               </div>
               <div className="border-t border-dashed border-gray-200 pt-3 flex justify-between items-end">
-                <span className="font-bold text-base">Tổng cộng</span>
-                <span className="font-bold text-2xl text-primary">
-                  {finalTotal.toLocaleString('vi-VN')}đ
+                <span className="font-bold text-base">
+                  {replacementSourceId ? (replacementDifference < 0 ? 'Còn thiếu:' : 'Cần trả thêm') : 'Tổng cộng'}
+                </span>
+                <span className={`font-bold text-2xl ${replacementSourceId && replacementDifference < 0 ? 'text-amber-600' : 'text-primary'}`}>
+                  {(replacementSourceId ? (replacementDifference < 0 ? -replacementDifference : replacementDifference) : finalTotal).toLocaleString('vi-VN')}đ
                 </span>
               </div>
             </div>
@@ -377,17 +422,35 @@ export function CartContent({ onClose }: CartContentProps) {
               <p role="alert" className="mb-4 text-sm font-medium text-red-600">Không kiểm tra được nguyên liệu. Vui lòng thử lại.</p>
             )}
 
+            {/* Cảnh báo 1 dòng ngay trên nút tiến hành thanh toán */}
+            {replacementSourceId && compensation.data && replacementDifference < 0 && (
+              <p className="mb-3 text-center text-xs font-semibold text-amber-800 flex items-center justify-center gap-1.5">
+                <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                <span>Còn thiếu {(-replacementDifference).toLocaleString('vi-VN')}đ so với ly nước cũ. Vui lòng chọn thêm món hoặc tăng size!</span>
+              </p>
+            )}
+
             <button
               onClick={handleCheckoutClick}
-              disabled={isLoading || authLoading || isOverStock || inventoryCheck.isPending || inventoryCheck.isError}
-              className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/60 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg active:scale-95"
+              disabled={isLoading || authLoading || (replacementSourceId && !compensation.data)
+                || isOverStock || inventoryCheck.isPending || inventoryCheck.isError
+                || (!!replacementSourceId && replacementDifference < 0)}
+              className={`w-full py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-md ${
+                !!replacementSourceId && replacementDifference < 0
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300 cursor-not-allowed opacity-90'
+                  : 'bg-primary hover:bg-primary-hover disabled:bg-primary/60 disabled:cursor-not-allowed text-white hover:shadow-lg active:scale-95'
+              }`}
             >
-              {isLoading ? 'Đang tạo đơn...' : authLoading ? 'Đang kiểm tra...' : 'Tiến hành Thanh toán'} <ArrowRight size={20} />
+              {isLoading ? 'Đang tạo đơn...' : authLoading ? 'Đang kiểm tra...'
+                : replacementSourceId && replacementDifference < 0
+                  ? `Chưa đủ tiền ly nước cũ (Thiếu ${(-replacementDifference).toLocaleString('vi-VN')}đ)`
+                  : replacementSourceId && replacementDifference === 0 ? 'Xác nhận đơn thay thế' : 'Tiến hành Thanh toán'} <ArrowRight size={20} />
             </button>
           </div>
         </div>
 
-        {/* Cột phải hiển thị danh sách mã ưu đãi trên màn hình lớn. */}
+        {/* Cột phải hiển thị danh sách mã ưu đãi trên màn hình lớn. Không hiển thị khi đổi món đền bù. */}
+        {!replacementSourceId && (
         <div
           className={`hidden md:flex flex-col bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] shrink-0 md:h-[80vh] md:max-h-[800px] ${showDropdown ? 'w-[340px] opacity-100 translate-x-0 ml-6' : 'w-0 opacity-0 -translate-x-10 pointer-events-none ml-0 border-0'
             }`}
@@ -466,6 +529,7 @@ export function CartContent({ onClose }: CartContentProps) {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Hộp thoại yêu cầu khách đăng nhập. */}

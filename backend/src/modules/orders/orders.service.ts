@@ -57,6 +57,7 @@ export class OrdersService {
                     inventoryState: 'RESERVED',
                     reservationExpiresAt: new Date(Date.now() + RESERVATION_DURATION_MS),
                     promoCode: dto.promoCode ?? null,
+                    notifications: { create: { status: 'PENDING' } },
                     items: {
                         create: cart.orderItems,
                     },
@@ -107,6 +108,16 @@ export class OrdersService {
                     include: { product: { select: { name: true, imageUrl: true } } },
                 },
                 payments: true,
+                compensationIssued: {
+                    select: {
+                        amount: true,
+                        replacements: {
+                            select: { id: true, status: true },
+                            where: { status: { in: ['PAID', 'PREPARING', 'READY', 'COMPLETED'] } },
+                        },
+                    },
+                },
+                compensationSource: { select: { amount: true } },
             },
         });
 
@@ -121,5 +132,41 @@ export class OrdersService {
                 product: item.product ?? { name: item.productName, imageUrl: item.productImageUrl },
             })),
         };
+    }
+
+    async getNotifications(userId: string) {
+        const where = { order: { userId } };
+        const [items, unreadCount] = await this.prisma.$transaction([
+            this.prisma.orderNotification.findMany({
+                where,
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                take: 30,
+                include: {
+                    order: {
+                        select: {
+                            compensationSourceId: true,
+                            compensationIssued: {
+                                select: {
+                                    amount: true,
+                                    replacements: {
+                                        select: { id: true, status: true },
+                                        where: { status: { in: ['PAID', 'PREPARING', 'READY', 'COMPLETED'] } },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
+            this.prisma.orderNotification.count({ where: { ...where, readAt: null } }),
+        ]);
+        return { items, unreadCount };
+    }
+
+    async readNotification(id: string | undefined, userId: string) {
+        await this.prisma.orderNotification.updateMany({
+            where: { id, order: { userId }, readAt: null },
+            data: { readAt: new Date() },
+        });
     }
 }

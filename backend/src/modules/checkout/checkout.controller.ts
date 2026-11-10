@@ -19,15 +19,10 @@ import { SepayWebhookDto } from './dto/sepay-webhook.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 
-// Hai đường dẫn dùng chung một luồng thanh toán: /api/checkout và /api/payments
 @Controller(['checkout', 'payments'])
 export class CheckoutController {
   constructor(private readonly checkoutService: CheckoutService) {}
 
-  // ----------------------------------------------------------
-  // POST /api/checkout/apply-voucher
-  // Áp dụng mã giảm giá cho đơn hàng (cho GUI gọi kiểm tra trước)
-  // ----------------------------------------------------------
   @Post('apply-voucher')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
@@ -35,10 +30,6 @@ export class CheckoutController {
     return this.checkoutService.applyVoucher(dto.orderId, dto.promoCode, user.id);
   }
 
-  // ----------------------------------------------------------
-  // POST /api/checkout
-  // Xử lý thanh toán đơn hàng
-  // ----------------------------------------------------------
   @Post()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
@@ -47,7 +38,6 @@ export class CheckoutController {
     @Headers('idempotency-key') idempotencyKey: string,
     @CurrentUser() user: { id: string },
   ) {
-    // Bắt buộc phải có Idempotency-Key để chống thanh toán trùng lặp
     if (!idempotencyKey) {
       throw new BadRequestException(
         'Header "Idempotency-Key" là bắt buộc. ' +
@@ -64,30 +54,19 @@ export class CheckoutController {
     );
   }
 
-  // ----------------------------------------------------------
-  // GET /api/checkout/order/:orderId
-  // Lấy lịch sử thanh toán của 1 đơn hàng
-  // ----------------------------------------------------------
   @Get('order/:orderId')
   @UseGuards(JwtAuthGuard)
   async getCheckoutsByOrder(@Param('orderId') orderId: string, @CurrentUser() user: { id: string }) {
     return this.checkoutService.getCheckoutsByOrder(orderId, user.id);
   }
 
-  // ----------------------------------------------------------
-  // GET /api/checkout/status/:orderId
-  // Lấy trạng thái đơn hàng & đếm ngược số giây còn lại trước khi hết hạn (cho GUI)
-  // ----------------------------------------------------------
   @Get('status/:orderId')
   @UseGuards(JwtAuthGuard)
   async getOrderCheckoutStatus(@Param('orderId') orderId: string, @CurrentUser() user: { id: string }) {
     return this.checkoutService.getOrderCheckoutStatus(orderId, user.id);
   }
 
-  // ----------------------------------------------------------
-  // POST /api/checkout/sepay-webhook (và /api/payments/sepay-webhook)
-  // Nhận thông báo biến động số dư từ cổng SePay (IPN / Webhook)
-  // ----------------------------------------------------------
+  // POST /api/checkout/sepay-webhook
   @Post('sepay-webhook')
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ whitelist: false, forbidNonWhitelisted: false, transform: true }))
@@ -96,5 +75,22 @@ export class CheckoutController {
     @Headers('authorization') authHeader?: string,
   ) {
     return this.checkoutService.processSepayWebhook(dto, authHeader);
+  }
+
+  // POST /api/checkout/payos-webhook (và /api/payments/payos-webhook)
+  @Post('payos-webhook')
+  @HttpCode(HttpStatus.OK)
+  async handlePayOSWebhook(@Body() body: any) {
+    return this.checkoutService.processPayOSWebhook(body);
+  }
+
+  // POST /api/checkout/payos-confirm-url
+  @Post('payos-confirm-url')
+  @HttpCode(HttpStatus.OK)
+  async confirmPayOSWebhookUrl(@Body('webhookUrl') webhookUrl: string) {
+    if (!webhookUrl) {
+      throw new BadRequestException('webhookUrl là bắt buộc');
+    }
+    return this.checkoutService.confirmPayOSWebhookUrl(webhookUrl);
   }
 }

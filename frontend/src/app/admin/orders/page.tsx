@@ -146,7 +146,7 @@ export default function AdminOrdersPage() {
 
     const handleCancel = (order: AdminOrder) => {
         const warn =
-            order.status === 'PAID' ? '\nKho và điểm thưởng của đơn này sẽ được hoàn lại.' : '';
+            order.status === 'PAID' ? '\nNguyên liệu sẽ được hoàn kho. Khách nhận thông báo để chọn đơn thay thế.' : '';
         if (confirm(`Hủy đơn #${order.id.slice(0, 8).toUpperCase()}?${warn}`)) {
             changeStatus.mutate({ id: order.id, status: 'CANCELLED' });
         }

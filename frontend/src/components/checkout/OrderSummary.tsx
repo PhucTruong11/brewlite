@@ -20,6 +20,7 @@ interface OrderSummaryProps {
   onRenew?: () => void;
   onReturnToCart?: () => void;
   appliedPromo?: AppliedPromo | null;
+  compensationAmount?: number;
   onRemovePromo?: () => void;
   method?: 'EWALLET' | 'CARD';
   onCheckPaymentStatus?: () => void;
@@ -45,6 +46,7 @@ export function OrderSummary({
   onRenew,
   onReturnToCart,
   appliedPromo,
+  compensationAmount,
   onRemovePromo,
   method = 'EWALLET',
   onCheckPaymentStatus,
@@ -107,7 +109,7 @@ export function OrderSummary({
             </button>
           )}
         </div>
-      ) : (
+      ) : compensationAmount === undefined && (
         /* Khi chưa có mã: Hiện thông báo và link quay lại giỏ hàng */
         <div className="mt-4 flex items-center justify-between rounded-xl bg-gray-50 border border-dashed border-gray-200 px-3.5 py-2.5 text-xs text-gray-500">
           <div className="flex items-center gap-1.5">
@@ -136,6 +138,12 @@ export function OrderSummary({
             <span className="font-bold">-{formatVND(appliedPromo.discount)}</span>
           </div>
         )}
+        {compensationAmount !== undefined && (
+          <div className="flex justify-between text-emerald-700 font-medium">
+            <span>Đền bù từ đơn gốc</span>
+            <span className="font-bold">-{formatVND(compensationAmount)}</span>
+          </div>
+        )}
 
         <div className="flex justify-between text-emerald-900 pt-1">
           <span>Tích lũy điểm (10.000đ = 1 điểm):</span>
@@ -143,7 +151,7 @@ export function OrderSummary({
         </div>
 
         <div className="flex items-center justify-between border-t border-gray-200 pt-3 text-base font-extrabold text-[#1E3932]">
-          <span>TỔNG THANH TOÁN:</span>
+          <span>{compensationAmount === undefined ? 'TỔNG THANH TOÁN:' : 'CẦN TRẢ THÊM:'}</span>
           <span className="text-xl text-primary font-black">
             {formatVND(finalTotal)}
           </span>
@@ -171,7 +179,9 @@ export function OrderSummary({
               Đã hết hạn thanh toán
             </button>
             <p className="text-center text-xs text-red-600 font-semibold">
-              Đơn hàng đã hết 2 cơ hội thanh toán. Mã ưu đãi (nếu có) đã tự động bị thu hồi. Vui lòng quay lại giỏ hàng để tạo đơn mới.
+              {compensationAmount === undefined
+                ? 'Đơn hàng đã hết lượt thanh toán. Bạn có thể tạo đơn mới bằng giỏ hàng và mã ưu đãi đang chọn.'
+                : 'Hệ thống đang kiểm tra giao dịch trước khi mở lại lượt chọn món.'}
             </p>
             {onReturnToCart && (
               <button
@@ -195,7 +205,7 @@ export function OrderSummary({
               <span>Đang chờ chuyển khoản VietQR...</span>
             </div>
             <p className="mt-1.5 text-[11px] text-gray-600 leading-relaxed">
-              Mở App Ngân hàng quét mã bên trái và chuyển đúng <strong className="text-emerald-700 font-bold">{formatVND(finalTotal)}</strong>. Hệ thống sẽ tự động xuất hóa đơn khi SePay xác nhận.
+              Mở App Ngân hàng quét mã bên trái và chuyển đúng <strong className="text-emerald-700 font-bold">{formatVND(finalTotal)}</strong>. Hệ thống sẽ tự động xuất hóa đơn ngay khi nhận được thanh toán.
             </p>
           </div>
 
@@ -216,7 +226,7 @@ export function OrderSummary({
             </div>
           )}
 
-          <button
+          {onCheckPaymentStatus && <button
             type="button"
             disabled={isCheckingStatus || isSubmitting}
             onClick={onCheckPaymentStatus}
@@ -228,7 +238,7 @@ export function OrderSummary({
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                <span>Đang kiểm tra SePay...</span>
+                <span>Đang kiểm tra giao dịch...</span>
               </>
             ) : (
               <>
@@ -238,7 +248,7 @@ export function OrderSummary({
                 <span>Tôi đã chuyển tiền (Kiểm tra lại)</span>
               </>
             )}
-          </button>
+          </button>}
 
           {onQuickTest && (
             <div className="pt-1 text-center">
@@ -273,7 +283,7 @@ export function OrderSummary({
               Đang xử lý thanh toán...
             </span>
           ) : finalTotal === 0 ? (
-            'Hoàn tất đơn hàng miễn phí (0đ)'
+            'Hoàn tất'
           ) : (
             `Xác nhận thanh toán Thẻ ${formatVND(finalTotal)}`
           )}

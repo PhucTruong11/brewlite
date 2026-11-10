@@ -6,9 +6,10 @@ import { AuthModule } from '../auth/auth.module.js';
 import { RewardsModule } from '../rewards/rewards.module.js';
 import { InventoryModule } from '../inventory/inventory.module.js';
 import { PaymentGatewayService } from './payment-gateway.service.js';
+import { OrdersModule } from '../orders/orders.module.js';
 
 @Module({
-  imports: [PrismaModule, AuthModule, RewardsModule, InventoryModule],
+  imports: [PrismaModule, AuthModule, RewardsModule, InventoryModule, OrdersModule],
   controllers: [CheckoutController],
   providers: [CheckoutService, PaymentGatewayService],
   exports: [CheckoutService],
