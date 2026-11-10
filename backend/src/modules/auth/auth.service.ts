@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -44,13 +45,30 @@ export class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
+  private async sendOtpOrThrow(
+    email: string,
+    otp: string,
+    failureMessage = 'Không thể gửi mã xác minh lúc này. Vui lòng thử lại sau.',
+  ) {
+    if (!(await this.emailService.sendOtpEmail(email, otp))) {
+      throw new ServiceUnavailableException({
+        code: 'EMAIL_DELIVERY_FAILED',
+        message: failureMessage,
+      });
+    }
+  }
+
   async register(dto: RegisterDto) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
 
     if (existingUser) {
-      throw new ConflictException('Email này đã được sử dụng');
+      throw new ConflictException(
+        existingUser.emailVerifiedAt
+          ? 'Email này đã được sử dụng'
+          : 'Email này đã đăng ký nhưng chưa xác minh. Vui lòng đăng nhập và chọn xác minh email để gửi lại mã.',
+      );
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -74,9 +92,11 @@ export class AuthService {
       },
     });
 
-    if (this.emailService && typeof (this.emailService as any).sendOtpEmail === 'function') {
-      await (this.emailService as any).sendOtpEmail(user.email, otp);
-    }
+    await this.sendOtpOrThrow(
+      user.email,
+      otp,
+      'Tài khoản đã được tạo nhưng chưa gửi được mã xác minh. Vui lòng đăng nhập và chọn xác minh email để gửi lại mã.',
+    );
 
     return {
       message: 'Đăng ký thành công. Vui lòng kiểm tra email để lấy mã OTP xác minh.',
@@ -175,9 +195,7 @@ export class AuthService {
       },
     });
 
-    if (this.emailService && typeof (this.emailService as any).sendOtpEmail === 'function') {
-      await (this.emailService as any).sendOtpEmail(user.email, otp);
-    }
+    await this.sendOtpOrThrow(user.email, otp);
 
     return genericResponse;
   }
@@ -245,7 +263,7 @@ export class AuthService {
     });
 
     // Gửi Mail OTP
-    await this.emailService.sendOtpEmail(cleanEmail, otp);
+    await this.sendOtpOrThrow(cleanEmail, otp);
 
     return { message: 'Mã OTP đã được gửi về email của bạn.' };
   }
