@@ -29,6 +29,8 @@ export interface CheckoutMethodsProps {
   onMethodChange: (method: 'EWALLET' | 'CARD') => void;
   finalTotal: number;
   qrUrl: string;
+  vietQrOnly?: boolean;
+  qrAction?: React.ReactNode;
   bankInfo?: BankInfo;
   cardInfo: CardFormData;
   onCardInfoChange: (data: CardFormData) => void;
@@ -59,6 +61,8 @@ export function CheckoutMethods({
   onMethodChange,
   finalTotal,
   qrUrl,
+  vietQrOnly = false,
+  qrAction,
   bankInfo,
   cardInfo,
   onCardInfoChange,
@@ -79,11 +83,11 @@ export function CheckoutMethods({
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm border border-emerald-900/10">
       <h2 className="text-lg font-bold text-[#1E3932] mb-4">
-        Chọn phương thức thanh toán
+        {vietQrOnly ? 'Thanh toán VietQR' : 'Chọn phương thức thanh toán'}
       </h2>
 
       {/* Tabs chuyển đổi */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      {!vietQrOnly && <div className="grid grid-cols-2 gap-3 mb-6">
         <button
           type="button"
           onClick={() => onMethodChange('EWALLET')}
@@ -93,7 +97,7 @@ export function CheckoutMethods({
               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
           }`}
         >
-          <span className="text-sm">VietQR (SePay) / MoMo</span>
+          <span className="text-sm">VietQR Pro / MoMo</span>
         </button>
 
         <button
@@ -107,7 +111,7 @@ export function CheckoutMethods({
         >
           <span className="text-sm">Thẻ ngân hàng</span>
         </button>
-      </div>
+      </div>}
 
       {/* Chi tiết cho Tab Ví MoMo / VietQR */}
       {method === 'EWALLET' && (
@@ -116,19 +120,19 @@ export function CheckoutMethods({
             Quét mã VietQR chuyển khoản tự động
           </p>
 
-          <div className="relative rounded-2xl bg-white p-4 shadow-md border-2 border-primary/20 flex flex-col items-center">
+          {qrUrl ? <div className="relative rounded-2xl bg-white p-4 shadow-md border-2 border-primary/20 flex flex-col items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={qrUrl}
-              alt="Mã QR thanh toán SePay"
+              alt="Mã QR thanh toán PayOS VietQR"
               className="h-52 w-52 object-contain rounded-lg"
             />
             <div className="mt-2 text-[12px] font-semibold text-gray-700">
               Số tiền: <strong className="text-primary text-sm">{formatVND(finalTotal)}</strong>
             </div>
-          </div>
+          </div> : qrAction}
 
-          {/* Khung chi tiết tài khoản ngân hàng SePay */}
+          {/* Khung chi tiết tài khoản ngân hàng */}
           {bankInfo && (
             <div className="mt-4 w-full max-w-sm rounded-xl bg-white p-3.5 text-left border border-emerald-200/80 shadow-sm text-xs space-y-2">
               <div className="flex justify-between items-center text-gray-600">
@@ -161,9 +165,9 @@ export function CheckoutMethods({
             </div>
           )}
 
-          <p className="text-xs text-gray-600 mt-4 max-w-xs">
-            Mở bất kỳ <strong>App Ngân Hàng</strong> hoặc <strong>MoMo</strong> quét mã QR trên để chuyển khoản. Hệ thống SePay sẽ tự động ghi nhận tiền về trong 3 - 5 giây!
-          </p>
+          {qrUrl && <p className="text-xs text-gray-600 mt-4 max-w-xs">
+            Mở bất kỳ <strong>App Ngân Hàng</strong> hoặc <strong>MoMo</strong> quét mã QR trên để chuyển khoản. Cổng thanh toán sẽ tự động ghi nhận tiền về ngay lập tức!
+          </p>}
         </div>
       )}
 

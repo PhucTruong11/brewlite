@@ -3,11 +3,12 @@
 import React from 'react';
 
 export interface CountdownTimerProps {
-  timeLeft?: number; // số giây còn lại
+  timeLeft?: number; 
   isExpired?: boolean;
   canRenew?: boolean;
   attempt?: number;
   showUI?: boolean;
+  detail?: string;
 }
 
 /** Hiển thị thời gian thanh toán còn lại theo hạn giữ nguyên liệu của đơn trên máy chủ. */
@@ -17,6 +18,7 @@ export function CountdownTimer({
   canRenew = false,
   attempt = 1,
   showUI = false,
+  detail,
 }: CountdownTimerProps) {
   if (!showUI) {
     return null;
@@ -32,9 +34,9 @@ export function CountdownTimer({
       <div>
         <p className="font-bold">{isExpired ? 'Đã hết thời gian thanh toán' : 'Thời gian thanh toán còn lại'}</p>
         <p className="mt-1 text-sm">
-          {isExpired
+          {detail ?? (isExpired
             ? canRenew ? 'Bạn có thể gia hạn thêm 2 phút một lần.' : 'Đã dùng hết lượt gia hạn. Vui lòng quay lại giỏ hàng.'
-            : `Lượt ${attempt}/2 · ${canRenew ? 'Có thể gia hạn thêm 1 lần' : 'Lượt gia hạn cuối cùng'}`}
+            : `Lượt ${attempt}/2 · ${canRenew ? 'Có thể gia hạn thêm 1 lần' : 'Lượt gia hạn cuối cùng'}`)}
         </p>
       </div>
       <div role="timer" aria-label={`Thời gian còn lại ${minutes} phút ${seconds} giây`} className="rounded-xl border border-current/20 bg-white px-4 py-2 font-mono text-2xl font-extrabold tabular-nums tracking-wider">

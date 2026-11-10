@@ -6,6 +6,7 @@ import { useCartStore, useHasCartHydrated } from '@/stores/cart.store';
 import api from '@/lib/api';
 import { getCartLineTotal, toOrderItem, type CartItem } from '@/lib/cart';
 import { RequireAuth } from '@/components/auth/RequireAuth';
+import { CompensationCheckout } from '@/components/checkout/CompensationCheckout';
 import {
   ReceiptInvoice,
   CountdownTimer,
@@ -17,7 +18,7 @@ import {
   type CardFormErrors,
 } from '@/components/checkout';
 import type { AppliedPromo } from '@/lib/voucher';
-
+// trang thông tin hiển thị để khách quét mã
 type CheckoutStatus = {
   status: string;
   total: number;
@@ -33,7 +34,7 @@ type CheckoutStatus = {
     transferContent: string;
   };
 };
-
+//dữ liệu danh sách các món ăn đã thêm vào giỏ hàng 
 type SavedOrder = {
   items: Array<{
     productId: string;
@@ -48,15 +49,13 @@ type SavedOrder = {
 function CheckoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { items, clearCart, appliedPromo, removePromo } = useCartStore();
+  const { items, clearCart, appliedPromo, replacementSourceId, selectReplacement } = useCartStore();
   const currentPromo: AppliedPromo | null = appliedPromo;
   const hasHydrated = useHasCartHydrated();
 
-  // Phương thức thanh toán: ví điện tử hoặc thẻ ngân hàng.
   const [method, setMethod] = useState<'EWALLET' | 'CARD'>('EWALLET');
 
-  // Mẫu thẻ ngân hàng được điền sẵn để thử luồng thanh toán mô phỏng.
-  const [cardInfo, setCardInfo] = useState<CardFormData>({
+   const [cardInfo, setCardInfo] = useState<CardFormData>({
     cardNumber: '9704 2200 8888 6666',
     cardHolder: 'NGUYEN VAN A',
     expiry: '12/28',
@@ -64,12 +63,10 @@ function CheckoutContent() {
   });
   const [cardErrors, setCardErrors] = useState<CardFormErrors>({});
 
-  // Thời lượng giữ đơn và thanh toán chạy ngầm: 2 phút (120 giây)
   const CHECKOUT_DURATION_SECONDS = 120;
   const CHECKOUT_RENEW_COUNT_KEY = 'brewlite_checkout_renew_count';
-  const MAX_RENEWALS = 1; // Chỉ cho phép gia hạn tối đa 1 lần duy nhất
+  const MAX_RENEWALS = 1; 
 
-  // Đồng hồ hiển thị thời gian còn lại của đơn đã tạo từ giỏ.
   const [timeLeft, setTimeLeft] = useState(CHECKOUT_DURATION_SECONDS);
 
   // Số lần đã gia hạn được đọc từ bộ nhớ trình duyệt.
@@ -91,17 +88,15 @@ function CheckoutContent() {
     message: string;
   } | null>(null);
 
-  // Dữ liệu HÓA ĐƠN XUẤT SAU KHI THANH TOÁN THÀNH CÔNG
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
-  // Mã đơn trong đường dẫn là đơn đã được tạo khi khách rời giỏ hàng.
   const orderId = searchParams.get('orderId');
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
   const [orderItems, setOrderItems] = useState<CartItem[] | null>(null);
   const isExpired = orderId !== null && (timeLeft <= 0 || checkoutStatus?.status === 'CANCELLED');
   const paymentAttemptRef = useRef<string | null>(null);
-  const renewalAttemptRef = useRef(false);
-  const serverDeadlineRef = useRef<number | null>(null);
+  const renewalAttemptRef = useRef(false);//chống gia hạn liên tục
+  const serverDeadlineRef = useRef<number | null>(null);//luu mốc thời gian hết hạn từ server chống sửa đổi
 
   // Đồng bộ hạn hai phút và số tiền thật của đơn từ máy chủ, không lấy đồng hồ hay giá giỏ làm chuẩn.
   useEffect(() => {
@@ -120,7 +115,7 @@ function CheckoutContent() {
           ? 0
           : Math.max(0, Math.floor((serverDeadlineRef.current - Date.now()) / 1000)));
 
-        // Tự động kích hoạt hóa đơn khi cổng thanh toán SePay báo đơn đã PAID
+        // Tự động kích hoạt hóa đơn khi cổng thanh toán VietQR báo đơn đã PAID
         if (response.data.status === 'PAID') {
           setReceiptData((prev) => {
             if (prev) return prev;
@@ -129,7 +124,7 @@ function CheckoutContent() {
             return {
               orderId,
               invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
-              paymentId: `PAY-SEPAY-${orderId.slice(-6).toUpperCase()}`,
+              paymentId: `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
               paidAt: now.toLocaleString('vi-VN', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -184,24 +179,19 @@ function CheckoutContent() {
     const poll = setInterval(syncStatus, 2_000);
     const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(poll); clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
-  // Tự động thu hồi mã giảm giá nếu hết hạn cả 2 cơ hội thanh toán (2 phút đầu + 1 lần gia hạn)
   useEffect(() => {
-    if (isExpired && !canRenew && currentPromo) {
-      const timer = setTimeout(() => {
-        removePromo();
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [isExpired, canRenew, currentPromo, removePromo]);
+    if (orderId && replacementSourceId) selectReplacement(null);
+  }, [orderId, replacementSourceId, selectReplacement]);
 
   // Đơn đã tạo là nguồn dữ liệu cho số tiền và nội dung QR; giỏ chỉ dùng để tạo lượt mới khi hết hạn.
   const displayItems = orderItems ?? items;
   const subtotal = checkoutStatus?.originalTotal ?? displayItems.reduce((sum, item) => sum + getCartLineTotal(item), 0);
   const discountAmount = checkoutStatus?.discount ?? (appliedPromo?.discount ?? 0);
   const finalTotal = checkoutStatus?.total ?? Math.max(0, subtotal - discountAmount);
-  const pointsEarned = Math.floor(finalTotal / 10000); // 10.000đ = 1 điểm, cùng quy tắc với máy chủ.
+  const pointsEarned = Math.floor(finalTotal / 10000); 
   const displayedPromo: AppliedPromo | null = checkoutStatus?.promoCode
     ? {
         code: checkoutStatus.promoCode,
@@ -255,7 +245,6 @@ function CheckoutContent() {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      // API trạng thái hủy đơn quá hạn và giải phóng lượng nguyên liệu đã giữ.
       const oldStatus = await api.get<CheckoutStatus>(`/checkout/status/${orderId}`);
       if (oldStatus.data.status !== 'CANCELLED') {
         throw new Error('Đơn cũ chưa được hủy. Vui lòng kiểm tra trạng thái đơn trước khi tạo lại.');
@@ -324,7 +313,7 @@ function CheckoutContent() {
     }
   };
 
-  // Khách bấm kiểm tra thủ công trạng thái giao dịch VietQR từ SePay
+  // Khách bấm kiểm tra thủ công trạng thái giao dịch VietQR
   const handleManualCheckPayment = async () => {
     if (isCheckingPayment || !orderId) return;
     setIsCheckingPayment(true);
@@ -335,14 +324,14 @@ function CheckoutContent() {
       if (response.data.status === 'PAID') {
         setStatusFeedback({
           type: 'success',
-          message: 'SePay đã xác nhận thanh toán thành công! Đang xuất hóa đơn...',
+          message: 'Hệ thống đã xác nhận thanh toán thành công! Đang xuất hóa đơn...',
         });
         const now = new Date();
         const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
         setReceiptData({
           orderId,
           invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
-          paymentId: `PAY-SEPAY-${orderId.slice(-6).toUpperCase()}`,
+          paymentId: `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
           paidAt: now.toLocaleString('vi-VN', {
             hour: '2-digit',
             minute: '2-digit',
@@ -366,7 +355,7 @@ function CheckoutContent() {
       } else {
         setStatusFeedback({
           type: 'warning',
-          message: 'Chưa nhận được giao dịch từ SePay. Nếu bạn vừa chuyển khoản, vui lòng đợi 3-5 giây để hệ thống nhận diện.',
+          message: 'Chưa nhận được giao dịch. Nếu bạn vừa chuyển khoản, vui lòng đợi vài giây để hệ thống ghi nhận.',
         });
         setTimeout(() => setStatusFeedback(null), 6000);
       }
@@ -399,9 +388,9 @@ function CheckoutContent() {
       return;
     }
 
-    // Với phương thức VietQR và đơn có tiền (>0), bắt buộc phải thanh toán qua SePay Webhook
+    // Với phương thức VietQR và đơn có tiền (>0), bắt buộc phải thanh toán qua VietQR Webhook
     if (method === 'EWALLET' && finalTotal > 0) {
-      setErrorMessage('Đơn hàng chọn thanh toán qua VietQR cần được quét mã và xác thực qua SePay.');
+      setErrorMessage('Đơn hàng chọn thanh toán qua VietQR cần được quét mã và thanh toán để xác nhận.');
       return;
     }
 
@@ -727,7 +716,12 @@ function CheckoutContent() {
 }
 
 function CheckoutForOrder() {
-  const orderId = useSearchParams().get('orderId');
+  const params = useSearchParams();
+  const orderId = params.get('orderId');
+  const replacementFor = params.get('replacementFor');
+  if (orderId && replacementFor) {
+    return <CompensationCheckout key={orderId} orderId={orderId} sourceId={replacementFor} />;
+  }
   // Đổi mã đơn sẽ tạo lại trạng thái trang, tránh hiển thị dữ liệu của đơn cũ trong lúc tải đơn mới.
   return <CheckoutContent key={orderId ?? 'empty'} />;
 }

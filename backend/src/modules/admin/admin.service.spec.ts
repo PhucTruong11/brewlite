@@ -9,6 +9,7 @@ describe('AdminService', () => {
         product: { update: vi.fn() },
         user: { findUnique: vi.fn(), update: vi.fn() },
         pointTransaction: { create: vi.fn() },
+        userVoucher: { updateMany: vi.fn() },
     };
     const prisma = {
         $transaction: vi.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
@@ -24,7 +25,7 @@ describe('AdminService', () => {
     it('danh sách admin loại đơn chờ thanh toán và chỉ giữ đơn hủy đã trả tiền', async () => {
         prisma.order.findMany.mockResolvedValue([]);
         prisma.order.count.mockResolvedValue(0);
-        prisma.$transaction.mockImplementationOnce(async (requests: Promise<unknown>[]) => Promise.all(requests));
+        (prisma.$transaction as any).mockImplementationOnce(async (requests: Promise<unknown>[]) => Promise.all(requests));
 
         await service.listOrders({ range: 'all' });
 
@@ -32,7 +33,10 @@ describe('AdminService', () => {
             where: expect.objectContaining({
                 AND: [expect.objectContaining({ OR: [
                     { status: { in: ['PAID', 'PREPARING', 'READY', 'COMPLETED'] } },
-                    { status: 'CANCELLED', payments: { some: { status: 'SUCCESS' } } },
+                    { status: 'CANCELLED', OR: [
+                        { payments: { some: { status: 'SUCCESS' } } },
+                        { compensationIssued: { isNot: null } },
+                    ] },
                 ] })],
             }),
         }));
@@ -73,62 +77,37 @@ describe('AdminService', () => {
         await expect(service.updateStatus('o1', 'PREPARING' as never)).rejects.toThrow(BadRequestException);
     });
 
-    it.each(['PENDING', 'PAYMENT_FAILED'])(
-        'hủy đơn %s: nhả nguyên liệu đã giữ trước khi đổi trạng thái',
+    it.each(['PENDING', 'PAYMENT_FAILED', 'PREPARING', 'READY', 'COMPLETED'])(
+        'chặn admin hủy đơn %s',
         async (status) => {
-            const order = {
-                id: 'o1', status, inventoryState: 'RESERVED', items: [],
-            };
-            tx.order.findUnique.mockResolvedValue(order);
-
-            await service.updateStatus('o1', 'CANCELLED' as never);
-
-            expect(inventory.release).toHaveBeenCalledExactlyOnceWith(tx, order);
-            expect(inventory.restore).not.toHaveBeenCalled();
-            expect(inventory.release.mock.invocationCallOrder[0]).toBeLessThan(
-                tx.order.update.mock.invocationCallOrder[0],
-            );
-            expect(tx.order.update).toHaveBeenCalledWith({
-                where: { id: 'o1' }, data: { status: 'CANCELLED' },
-            });
+            tx.order.findUnique.mockResolvedValue({ id: 'o1', status, items: [] });
+            await expect(service.updateStatus('o1', 'CANCELLED' as never)).rejects.toThrow(ConflictException);
+            expect(inventory.release).not.toHaveBeenCalled();
+            expect(tx.order.update).not.toHaveBeenCalled();
         },
     );
 
-    it('không nhả kho lần nữa nếu nguyên liệu của đơn đã được trả', async () => {
+    it('hủy đơn PAID: hoàn kho, giữ điểm và tạo đền bù bằng số tiền thực trả', async () => {
         tx.order.findUnique.mockResolvedValue({
-            id: 'o1', status: 'PENDING', inventoryState: 'RELEASED', items: [],
+            id: 'o1', status: 'PAID', inventoryState: 'LEGACY', userId: 'u1', loyaltyPointsEarned: 4,
+            payments: [{ amount: 45_000 }], items: [{ productId: 'p1', qty: 2 }],
         });
-
         await service.updateStatus('o1', 'CANCELLED' as never);
-
-        expect(inventory.release).not.toHaveBeenCalled();
-        expect(tx.order.update).toHaveBeenCalledWith({
-            where: { id: 'o1' }, data: { status: 'CANCELLED' },
-        });
-    });
-
-    it('hủy đơn PAID: hoàn kho, thu hồi điểm, ghi sổ điểm', async () => {
-        tx.order.findUnique.mockResolvedValue({
-            id: 'o1', status: 'PAID', inventoryState: 'LEGACY', userId: 'u1', loyaltyPointsEarned: 3,
-            items: [{ productId: 'p1', qty: 2 }],
-        });
-        tx.user.findUnique.mockResolvedValue({ loyaltyPoints: 10 });
-        tx.user.update.mockResolvedValue({ loyaltyPoints: 7 });
-
-        await service.updateStatus('o1', 'CANCELLED' as never);
-
         expect(tx.product.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ stock: { increment: 2 } }) }),
         );
-        expect(tx.pointTransaction.create).toHaveBeenCalledWith(
-            expect.objectContaining({ data: expect.objectContaining({ type: 'REFUND', points: -3 }) }),
-        );
+        expect(tx.pointTransaction.create).not.toHaveBeenCalled();
+        expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: {
+            status: 'CANCELLED',
+            compensationIssued: { create: { amount: 45_000 } },
+            notifications: { create: { status: 'CANCELLED' } },
+        } });
     });
 
     it('hủy đơn nguyên liệu: hoàn nguyên liệu từ snapshot, không cộng Product.stock', async () => {
         tx.order.findUnique.mockResolvedValue({
             id: 'o2', status: 'PAID', inventoryState: 'CONSUMED', userId: 'u1',
-            loyaltyPointsEarned: 0, items: [{ recipeSnapshot: [{ ingredientId: 'i1', quantity: '20.000' }] }],
+            loyaltyPointsEarned: 0, payments: [{ amount: 30_000 }], items: [{ recipeSnapshot: [{ ingredientId: 'i1', quantity: '20.000' }] }],
         });
         await service.updateStatus('o2', 'CANCELLED' as never);
         expect(inventory.restore).toHaveBeenCalledWith(tx, expect.objectContaining({ id: 'o2' }));

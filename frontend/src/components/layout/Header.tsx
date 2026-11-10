@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from './Sidebar';
+import { OrderNotifications } from '@/components/orders/OrderNotifications';
 import { useAuth } from '@/hooks/useAuth';
 import { useCategories } from '@/hooks/useCategories';
 import { useCartStore, useHasCartHydrated } from '@/stores/cart.store';
@@ -256,6 +257,7 @@ export function Header() {
             )}
           </div>
 
+          {user && <OrderNotifications key={user.id} userId={user.id} />}
           {/* KHU VỰC TÀI KHOẢN KHÁCH HÀNG */}
           {loading ? (
             <div className="h-8 w-24 animate-pulse rounded-full bg-primary/10" />
@@ -352,13 +354,12 @@ export function Header() {
           )}
         </div>
 
-        <button
-          onClick={() => setSidebarOpen(true)}
-          aria-label="Mở menu"
-          className="shrink-0 text-text lg:hidden"
-        >
-          <MenuIcon />
-        </button>
+        <div className="flex shrink-0 items-center gap-2 lg:hidden">
+          {user && <OrderNotifications key={user.id} userId={user.id} />}
+          <button onClick={() => setSidebarOpen(true)} aria-label="Mở menu" className="text-text">
+            <MenuIcon />
+          </button>
+        </div>
       </header>
 
       {/* MODAL THÔNG BÁO XÁC NHẬN ĐĂNG XUẤT */}

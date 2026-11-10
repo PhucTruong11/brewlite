@@ -214,4 +214,15 @@ export class RewardsService {
       throw new ConflictException('Voucher vừa được sử dụng ở một đơn khác, vui lòng thử lại');
     }
   }
+
+  // ---------------- Hoàn lại voucher khi đơn hàng bị hủy ----------------
+  async restoreVoucher(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+  ): Promise<void> {
+    await tx.userVoucher.updateMany({
+      where: { usedOrderId: orderId },
+      data: { usedAt: null, usedOrderId: null },
+    });
+  }
 }

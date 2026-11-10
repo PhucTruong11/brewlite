@@ -7,17 +7,12 @@ import { AllDrinksScroll } from './AllDrinksScroll';
 
 export function HomeSections() {
     const searchParams = useSearchParams();
-    const isFiltering =
-        !!searchParams.get('category') || !!searchParams.get('q') || searchParams.get('view') === 'all';
+    const hasSpecificFilter = !!searchParams.get('category') || !!searchParams.get('q');
 
     return (
         <>
-            {!isFiltering && (
-                <>
-                    <PromoCarousel />
-                    <BestSellers />
-                </>
-            )}
+            <PromoCarousel />
+            {!hasSpecificFilter && <BestSellers />}
             <AllDrinksScroll />
         </>
     );
