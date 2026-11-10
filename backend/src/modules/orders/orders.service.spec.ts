@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { OrdersService } from './orders.service.js';
 
 describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
@@ -43,7 +43,14 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
   // 2. Kiểm tra thiếu nguyên liệu (Read-only check)
   it('Từ chối tạo đơn khi thiếu nguyên liệu ngay từ bước tiền kiểm định giỏ hàng', async () => {
     inventory.prepareCart.mockResolvedValueOnce({ ...cart, shortages: [{ ingredientName: 'Hạt cà phê' }] });
-    await expect(service.create({ items: [item] }, 'u1')).rejects.toThrow('Không đủ nguyên liệu: Hạt cà phê');
+    const error = await service.create({ items: [item] }, 'u1').catch((reason) => reason);
+    expect(error).toBeInstanceOf(HttpException);
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toEqual({
+      statusCode: 400,
+      message: ['Không đủ nguyên liệu: Hạt cà phê'],
+      error: 'Bad Request',
+    });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -68,7 +75,14 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
   // 4. Kiểm tra toàn vẹn giá (Price integrity)
   it('Hoàn tác (Rollback) nếu giá món bị thay đổi giữa lúc xem trước và lúc bắt đầu transaction', async () => {
     inventory.prepareCart.mockResolvedValueOnce(cart).mockResolvedValueOnce({ ...cart, subtotal: 80_000 });
-    await expect(service.create({ items: [item] }, 'u1')).rejects.toThrow('Giá món vừa thay đổi');
+    const error = await service.create({ items: [item] }, 'u1').catch((reason) => reason);
+    expect(error).toBeInstanceOf(HttpException);
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toEqual({
+      statusCode: 400,
+      message: ['Giá món vừa thay đổi, vui lòng kiểm tra lại giỏ hàng'],
+      error: 'Bad Request',
+    });
     expect(inventory.reserve).not.toHaveBeenCalled();
   });
 

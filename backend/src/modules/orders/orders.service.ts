@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { createBadRequestException } from '../../common/http-exceptions.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { PromotionsService } from '../promotions/promotions.service.js';
@@ -22,7 +23,7 @@ export class OrdersService {
 
         const preview = await this.inventory.prepareCart(dto.items);
         if (preview.shortages.length) {
-            throw new BadRequestException([
+            throw createBadRequestException([
                 `Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`,
             ]);
         }
@@ -45,7 +46,7 @@ export class OrdersService {
         const order = await this.prisma.$transaction(async (tx) => {
             const cart = await this.inventory.prepareCart(dto.items, tx);
             if (cart.subtotal !== calculatedTotal) {
-                throw new BadRequestException([
+                throw createBadRequestException([
                     'Giá món vừa thay đổi, vui lòng kiểm tra lại giỏ hàng',
                 ]);
             }
@@ -151,7 +152,7 @@ export class OrdersService {
 
     private validateOrderItems(items: CreateOrderDto['items']): void {
         if (!Array.isArray(items) || items.length === 0) {
-            throw new BadRequestException(['Giỏ hàng không được rỗng']);
+            throw createBadRequestException(['Giỏ hàng không được rỗng']);
         }
 
         for (const [index, item] of items.entries()) {
@@ -160,7 +161,7 @@ export class OrdersService {
                 item.qty < 1 ||
                 item.qty > 100
             ) {
-                throw new BadRequestException([
+                throw createBadRequestException([
                     `items.${index}.qty.Số lượng phải là số nguyên từ 1 đến 100`,
                 ]);
             }

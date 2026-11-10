@@ -1,8 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { ValidationError } from 'class-validator';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
+import { createBadRequestException } from './common/http-exceptions.js';
 
 function flattenValidationErrors(
   errors: ValidationError[],
@@ -48,7 +49,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true, // Throw error nếu gửi field lạ
       transform: true,       // Tự động transform types
       exceptionFactory: (errors) => {
-        return new BadRequestException(flattenValidationErrors(errors));
+        return createBadRequestException(flattenValidationErrors(errors));
       },
     }),
   );
