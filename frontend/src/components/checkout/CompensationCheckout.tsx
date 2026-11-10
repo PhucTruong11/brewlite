@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
@@ -109,8 +108,9 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
       clearCart();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.push('/orders/' + orderId + '?confirmed=1');
-    } catch (err: any) {
-      setCardSubmitError(err?.response?.data?.message || 'Thanh toán thẻ thất bại. Vui lòng thử lại.');
+    } catch (err: unknown) {
+      const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
+      setCardSubmitError(message || 'Thanh toán thẻ thất bại. Vui lòng thử lại.');
     } finally {
       setIsPayingCard(false);
     }
@@ -124,8 +124,9 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
       clearCart();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.push('/orders/' + orderId + '?confirmed=1');
-    } catch (err: any) {
-      alert(err?.response?.data?.message || 'Không thể xác nhận thanh toán thử nghiệm.');
+    } catch (err: unknown) {
+      const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
+      alert(message || 'Không thể xác nhận thanh toán thử nghiệm.');
     } finally {
       setIsPayingCard(false);
     }
@@ -200,8 +201,9 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
       const nextOrder = res.data.data;
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.replace(replacementCheckoutHref(nextOrder.id, sourceId));
-    } catch (err: any) {
-      setRecreateError(err?.response?.data?.message || 'Không thể tạo lại đơn thanh toán. Vui lòng thử lại.');
+    } catch (err: unknown) {
+      const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
+      setRecreateError(message || 'Không thể tạo lại đơn thanh toán. Vui lòng thử lại.');
     } finally {
       setIsRecreating(false);
     }
@@ -211,7 +213,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     if (matches && replacement && replacement.amountDue > 0 && !replacement.paymentLink && !createLink.isPending && !createLink.isError) {
       createLink.mutate();
     }
-  }, [matches, replacement?.amountDue, replacement?.paymentLink, createLink]);
+  }, [matches, replacement, createLink]);
 
   useEffect(() => {
     if (matches && replacement?.status === 'PAID' && replacement.amountDue > 0) {
@@ -225,7 +227,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
 
   useEffect(() => {
     if (matches && replacement && replacement.status !== 'PENDING' && draftSourceId === sourceId) clearCart();
-  }, [matches, replacement?.status, draftSourceId, sourceId, clearCart]);
+  }, [matches, replacement, draftSourceId, sourceId, clearCart]);
 
   const isInitialLoading = state.isPending || order.isPending;
   const isFetchingMismatch = state.isFetching && !matches;
@@ -332,7 +334,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
                 </div>
               </div>
               <div className="rounded-xl bg-primary/5 p-4 text-xs text-text/80 leading-relaxed border border-primary/10">
-                👉 Vui lòng kiểm tra lại món đã chọn ở cột tóm tắt bên phải và nhấn nút <strong className="text-primary font-bold">"Hoàn tất"</strong> để gửi đơn đến quầy pha chế.
+                👉 Vui lòng kiểm tra lại món đã chọn ở cột tóm tắt bên phải và nhấn nút <strong className="text-primary font-bold">&quot;Hoàn tất&quot;</strong> để gửi đơn đến quầy pha chế.
               </div>
             </div>
           )}

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
-import { IngredientUnit, OrderStatus, PointTransactionType, Prisma, ProductSize, } from '@prisma/client';
+import { IngredientUnit, OrderStatus, Prisma, ProductSize, } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { assertTransition } from '../orders/orders-state.js';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto.js';

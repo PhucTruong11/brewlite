@@ -106,7 +106,6 @@ export function CartContent({ onClose }: CartContentProps) {
   });
   const replacementAmount = compensation.data?.amount ?? 0;
   const replacementDifference = (inventoryCheck.data?.subtotal ?? subtotal) - replacementAmount;
-  const currentReplacement = replacementSourceId ? compensation.data?.replacement : null;
 
   useEffect(() => {
     const fetchPromos = async () => {

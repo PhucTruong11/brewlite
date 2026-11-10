@@ -179,6 +179,7 @@ function CheckoutContent() {
     const poll = setInterval(syncStatus, 2_000);
     const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(poll); clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
   useEffect(() => {

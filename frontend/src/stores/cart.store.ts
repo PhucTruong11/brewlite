@@ -33,6 +33,33 @@ const getPromoKey = (userId: string | null) => `${getCartKey(userId)}_promo`;
 const getReplacementModeKey = (userId: string) => getCartKey(userId) + '_replacement';
 const getReplacementCartKey = (userId: string, sourceId: string) => getReplacementModeKey(userId) + '_' + sourceId;
 
+const getSessionItem = (key: string): string | null => {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const setSessionItem = (key: string, value: string): void => {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
+
+const removeSessionItem = (key: string): void => {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+};
+
 const mergeCartItems = (existingItems: CartItem[], guestItems: CartItem[]): CartItem[] => {
   const merged: CartItem[] = [];
 
@@ -153,7 +180,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
         localStorage.removeItem(guestKey);
         localStorage.removeItem(getPromoKey(null));
       }
-      const replacementSourceId = sessionStorage.getItem(getReplacementModeKey(userId));
+      const replacementSourceId = getSessionItem(getReplacementModeKey(userId));
       set({
         currentUserId: userId,
         replacementSourceId,
@@ -171,10 +198,10 @@ export const useCartStore = create<CartStore>((set, get) => ({
     const { currentUserId, replacementSourceId } = get();
     if (!currentUserId || sourceId === replacementSourceId) return;
     if (sourceId) {
-      sessionStorage.setItem(getReplacementModeKey(currentUserId), sourceId);
+      setSessionItem(getReplacementModeKey(currentUserId), sourceId);
       set({ replacementSourceId: sourceId, items: readCartItems(getReplacementCartKey(currentUserId, sourceId)), appliedPromo: null });
     } else {
-      sessionStorage.removeItem(getReplacementModeKey(currentUserId));
+      removeSessionItem(getReplacementModeKey(currentUserId));
       const items = readCartItems(getCartKey(currentUserId));
       set({ replacementSourceId: null, items, appliedPromo: promoForItems(readSavedPromo(currentUserId), items) });
     }

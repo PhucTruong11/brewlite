@@ -162,8 +162,9 @@ function OrderDetailContent() {
         items: itemsToSubmit,
       });
       router.push(replacementCheckoutHref(res.data.data.id, order.compensationSourceId));
-    } catch (err: any) {
-      alert(err?.response?.data?.message || 'Không thể tạo lại đơn thanh toán.');
+    } catch (err: unknown) {
+      const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
+      alert(message || 'Không thể tạo lại đơn thanh toán.');
     } finally {
       setIsRecreating(false);
     }
