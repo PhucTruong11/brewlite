@@ -18,13 +18,13 @@ export class OrdersService {
         if (!userId) {
             throw new UnauthorizedException('Vui lòng đăng nhập để đặt hàng');
         }
-        if (!dto.items || dto.items.length === 0) {
-            throw new BadRequestException('Giỏ hàng không được rỗng');
-        }
+        this.validateOrderItems(dto.items);
 
         const preview = await this.inventory.prepareCart(dto.items);
         if (preview.shortages.length) {
-            throw new BadRequestException(`Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`);
+            throw new BadRequestException([
+                `Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`,
+            ]);
         }
         const calculatedTotal = preview.subtotal;
 
@@ -45,7 +45,9 @@ export class OrdersService {
         const order = await this.prisma.$transaction(async (tx) => {
             const cart = await this.inventory.prepareCart(dto.items, tx);
             if (cart.subtotal !== calculatedTotal) {
-                throw new BadRequestException('Giá món vừa thay đổi, vui lòng kiểm tra lại giỏ hàng');
+                throw new BadRequestException([
+                    'Giá món vừa thay đổi, vui lòng kiểm tra lại giỏ hàng',
+                ]);
             }
             await this.inventory.reserve(tx, cart);
             const newOrder = await tx.order.create({
@@ -83,7 +85,19 @@ export class OrdersService {
             orderBy: { createdAt: 'desc' },
             include: {
                 items: {
-                    include: { product: { select: { name: true, imageUrl: true } } },
+                    select: {
+                        id: true,
+                        orderId: true,
+                        productId: true,
+                        productName: true,
+                        productImageUrl: true,
+                        size: true,
+                        toppings: true,
+                        qty: true,
+                        lineTotal: true,
+                        recipeSnapshot: true,
+                        product: { select: { name: true, imageUrl: true } },
+                    },
                 },
             },
         });
@@ -104,7 +118,19 @@ export class OrdersService {
             where: { id, userId },
             include: {
                 items: {
-                    include: { product: { select: { name: true, imageUrl: true } } },
+                    select: {
+                        id: true,
+                        orderId: true,
+                        productId: true,
+                        productName: true,
+                        productImageUrl: true,
+                        size: true,
+                        toppings: true,
+                        qty: true,
+                        lineTotal: true,
+                        recipeSnapshot: true,
+                        product: { select: { name: true, imageUrl: true } },
+                    },
                 },
                 payments: true,
             },
@@ -122,4 +148,23 @@ export class OrdersService {
             })),
         };
     }
+
+    private validateOrderItems(items: CreateOrderDto['items']): void {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new BadRequestException(['Giỏ hàng không được rỗng']);
+        }
+
+        for (const [index, item] of items.entries()) {
+            if (
+                !Number.isSafeInteger(item.qty) ||
+                item.qty < 1 ||
+                item.qty > 100
+            ) {
+                throw new BadRequestException([
+                    `items.${index}.qty.Số lượng phải là số nguyên từ 1 đến 100`,
+                ]);
+            }
+        }
+    }
+
 }

@@ -1,7 +1,30 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { ValidationError } from 'class-validator';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
+
+function flattenValidationErrors(
+  errors: ValidationError[],
+  parentPath = '',
+): string[] {
+  return errors.flatMap((error) => {
+    const propertyPath = parentPath
+      ? `${parentPath}.${error.property}`
+      : error.property;
+
+    const ownErrors = Object.values(error.constraints ?? {}).map(
+      (message) => `${propertyPath}.${message}`,
+    );
+
+    const childErrors = flattenValidationErrors(
+      error.children ?? [],
+      propertyPath,
+    );
+
+    return [...ownErrors, ...childErrors];
+  });
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -24,6 +47,9 @@ async function bootstrap() {
       whitelist: true,       // Loại bỏ các field không có trong DTO
       forbidNonWhitelisted: true, // Throw error nếu gửi field lạ
       transform: true,       // Tự động transform types
+      exceptionFactory: (errors) => {
+        return new BadRequestException(flattenValidationErrors(errors));
+      },
     }),
   );
 

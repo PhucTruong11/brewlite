@@ -18,7 +18,7 @@ export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async prepareCart(items: CreateOrderItemDto[], db: Database = this.prisma) {
-    if (!items?.length) throw new BadRequestException('Giỏ hàng không được rỗng');
+    if (!items?.length) throw new BadRequestException(['Giỏ hàng không được rỗng']);
 
     const productIds = [...new Set(items.map((item) => item.productId))];
     const toppingNames = [...new Set(items.flatMap((item) => item.toppings ?? []))];
@@ -32,13 +32,13 @@ export class InventoryService {
       }),
     ]);
     if (products.length !== productIds.length) {
-      throw new BadRequestException('Một số sản phẩm không tồn tại hoặc đã ngừng kinh doanh');
+      throw new BadRequestException(['Một số sản phẩm không tồn tại hoặc đã ngừng kinh doanh']);
     }
     const productById = new Map(products.map((product) => [product.id, product]));
     const toppingByName = new Map(toppings.map((topping) => [topping.name, topping]));
     for (const name of toppingNames) {
       if (!toppingByName.has(name)) {
-        throw new BadRequestException(`Topping "${name}" không tồn tại hoặc đã ngừng bán`);
+        throw new BadRequestException([`Topping "${name}" không tồn tại hoặc đã ngừng bán`]);
       }
     }
 
@@ -67,22 +67,22 @@ export class InventoryService {
     let subtotal = 0;
     const orderItems = items.map((item) => {
       if (!Number.isSafeInteger(item.qty) || item.qty < 1) {
-        throw new BadRequestException('Số lượng món phải là số nguyên dương');
+        throw new BadRequestException(['Số lượng món phải là số nguyên dương']);
       }
       const product = productById.get(item.productId)!;
       const price = product.prices.find((entry) => entry.size === item.size);
-      if (!price) throw new BadRequestException(`Sản phẩm "${product.name}" không có size ${item.size}`);
+      if (!price) throw new BadRequestException([`Sản phẩm "${product.name}" không có size ${item.size}`]);
       const baseRecipes = productRecipes.get(`${product.id}:${item.size}`);
-      if (!baseRecipes?.length) throw new BadRequestException(`Chưa có công thức cho "${product.name}" size ${item.size}`);
+      if (!baseRecipes?.length) throw new BadRequestException([`Chưa có công thức cho "${product.name}" size ${item.size}`]);
       if (item.toppings?.length && !product.allowToppings) {
-        throw new BadRequestException(`Sản phẩm "${product.name}" không cho phép topping`);
+        throw new BadRequestException([`Sản phẩm "${product.name}" không cho phép topping`]);
       }
 
       const lineIngredients = new Map<string, Prisma.Decimal>();
       const addRecipes = (entries: typeof recipes) => {
         for (const entry of entries) {
           if (!entry.ingredient.isActive) {
-            throw new BadRequestException(`Nguyên liệu "${entry.ingredient.name}" đang ngừng sử dụng`);
+            throw new BadRequestException([`Nguyên liệu "${entry.ingredient.name}" đang ngừng sử dụng`]);
           }
           const quantity = entry.quantity.mul(item.qty);
           lineIngredients.set(entry.ingredientId, (lineIngredients.get(entry.ingredientId) ?? new Prisma.Decimal(0)).add(quantity));
@@ -94,12 +94,12 @@ export class InventoryService {
       for (const name of item.toppings ?? []) {
         const topping = toppingByName.get(name)!;
         const entries = toppingRecipes.get(topping.id);
-        if (!entries?.length) throw new BadRequestException(`Chưa có công thức cho topping "${name}"`);
+        if (!entries?.length) throw new BadRequestException([`Chưa có công thức cho topping "${name}"`]);
         addRecipes(entries);
         toppingPrice += topping.price;
       }
       const lineTotal = (price.price + toppingPrice) * item.qty;
-      if (!Number.isSafeInteger(lineTotal) || lineTotal < 0) throw new BadRequestException('Giá trị giỏ hàng không hợp lệ');
+      if (!Number.isSafeInteger(lineTotal) || lineTotal < 0) throw new BadRequestException(['Giá trị giỏ hàng không hợp lệ']);
       subtotal += lineTotal;
       // Lưu định lượng tại thời điểm đặt để việc sửa công thức sau này không đổi đơn cũ.
       const recipeSnapshot: SnapshotEntry[] = [...lineIngredients.entries()]
@@ -116,7 +116,7 @@ export class InventoryService {
         recipeSnapshot,
       };
     });
-    if (!Number.isSafeInteger(subtotal)) throw new BadRequestException('Giá trị giỏ hàng không hợp lệ');
+    if (!Number.isSafeInteger(subtotal)) throw new BadRequestException(['Giá trị giỏ hàng không hợp lệ']);
 
     const shortages = [...required.entries()].flatMap(([ingredientId, quantity]) => {
       const ingredient = ingredientById.get(ingredientId)!;
