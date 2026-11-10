@@ -1,15 +1,17 @@
 'use client';
 
-import { Suspense, useMemo } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import api from '@/lib/api';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { CartStickyBar } from '@/components/cart/CartStickyBar';
 import { OrderStatusBadge, OrderStatusStepper } from '@/components/orders/OrderStatus';
 import { formatVND } from '@/lib/utils';
+import { replacementCheckoutHref } from '@/lib/order-compensation';
 
 import type { Order } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,7 +29,12 @@ interface OrderItem {
   };
 }
 
-type OrderWithItems = Omit<Order, 'items'> & { items: OrderItem[] };
+type OrderWithItems = Omit<Order, 'items'> & {
+  items: OrderItem[];
+  compensationIssued?: { amount: number; replacements?: { id: string; status: Order['status'] }[] } | null;
+  compensationSourceId?: string | null;
+  compensationSource?: { amount: number } | null;
+};
 
 const ACTIVE_ORDER_STATUSES: Order['status'][] = [
   'PENDING',
@@ -140,6 +147,28 @@ function OrderDetailContent() {
     [order?.id],
   );
 
+  const [isRecreating, setIsRecreating] = useState(false);
+  const handleRecreateFromOrder = async () => {
+    if (!order?.compensationSourceId || isRecreating) return;
+    setIsRecreating(true);
+    try {
+      const itemsToSubmit = order.items.map((i) => ({
+        productId: i.productId,
+        size: i.size,
+        toppings: i.toppings,
+        quantity: i.qty,
+      }));
+      const res = await api.post<{ data: { id: string } }>('/orders/' + order.compensationSourceId + '/replacement', {
+        items: itemsToSubmit,
+      });
+      router.push(replacementCheckoutHref(res.data.data.id, order.compensationSourceId));
+    } catch (err: any) {
+      alert(err?.response?.data?.message || 'Không thể tạo lại đơn thanh toán.');
+    } finally {
+      setIsRecreating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -187,6 +216,49 @@ function OrderDetailContent() {
         <OrderStatusBadge status={order.status} />
       </div>
 
+      {order.compensationIssued && (
+        <div className="space-y-2 rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <p className="font-bold">Cửa hàng đã hủy đơn. Giá trị đền bù {formatVND(order.compensationIssued.amount)}.</p>
+          {order.compensationIssued.replacements && order.compensationIssued.replacements.length > 0 ? (
+            <Link href={'/orders/' + order.compensationIssued.replacements[0].id} className="inline-block text-sm font-bold text-emerald-700 underline">
+              ✓ Đã đổi sang đơn #{order.compensationIssued.replacements[0].id.slice(0, 8).toUpperCase()} (Xem chi tiết)
+            </Link>
+          ) : (
+            <Link href={'/orders/' + order.id + '/replacement'} className="inline-block text-sm font-bold text-primary underline">
+              Chọn món thay thế
+            </Link>
+          )}
+        </div>
+      )}
+
+      {order.compensationSourceId && (
+        <Link href={'/orders/' + order.compensationSourceId} className="text-sm font-bold text-primary underline">
+          Xem đơn gốc #{order.compensationSourceId.slice(0, 8).toUpperCase()}
+        </Link>
+      )}
+
+      {order.status === 'CANCELLED' && order.compensationSourceId && !order.compensationIssued && (
+        <div className="space-y-3 rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <p className="font-semibold text-text">Lần thanh toán này đã hết hạn. Bạn có thể thanh toán lại các món đã chọn hoặc chọn món khác.</p>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleRecreateFromOrder}
+              disabled={isRecreating}
+              className="rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 disabled:opacity-50 transition-all"
+            >
+              {isRecreating ? 'Đang tạo lại...' : 'Thanh toán lại đơn này'}
+            </button>
+            <Link
+              href={'/orders/' + order.compensationSourceId + '/replacement'}
+              className="inline-flex items-center rounded-xl border border-primary/20 bg-white px-5 py-2.5 text-sm font-bold text-primary hover:bg-primary/5 transition-all"
+            >
+              Chọn món khác
+            </Link>
+          </div>
+        </div>
+      )}
+
       {(order.status === 'PENDING' || order.status === 'PAYMENT_FAILED') && (
         <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm">
           <p className="text-sm font-bold text-amber-900">
@@ -196,7 +268,9 @@ function OrderDetailContent() {
           </p>
           <button
             type="button"
-            onClick={() => router.push(`/checkout?orderId=${order.id}`)}
+            onClick={() => router.push(order.compensationSourceId
+              ? replacementCheckoutHref(order.id, order.compensationSourceId)
+              : '/checkout?orderId=' + order.id)}
             className="w-full rounded-full bg-primary py-3 text-sm font-bold text-white shadow-md transition-all hover:bg-primary-hover active:scale-[0.99]"
           >
             Thanh toán ngay
@@ -232,9 +306,17 @@ function OrderDetailContent() {
             </span>
           </div>
         )}
+        {order.compensationSource && (
+          <div className="flex justify-between gap-2 text-sm text-emerald-700 font-medium">
+            <span>Đền bù từ đơn gốc</span>
+            <span className="font-bold">-{formatVND(order.compensationSource.amount)}</span>
+          </div>
+        )}
         {order.loyaltyPointsEarned > 0 && (
           <div className="flex justify-between items-center text-sm">
-            <span className="font-medium text-text/75">Điểm thưởng</span>
+            <span className="font-medium text-text/75">
+              {order.compensationSource ? 'Điểm thưởng cộng thêm' : 'Điểm thưởng'}
+            </span>
             <span className="whitespace-nowrap text-emerald-700 font-bold">
               + {order.loyaltyPointsEarned} điểm
             </span>
@@ -242,9 +324,11 @@ function OrderDetailContent() {
         )}
         <div className="my-1 border-t border-dashed border-primary/15" />
         <div className="flex justify-between items-center text-sm gap-4">
-          <span className="font-extrabold text-base text-text">Tổng thanh toán</span>
+          <span className="font-extrabold text-base text-text">
+            {order.compensationSource ? 'Thực trả thêm' : 'Tổng thanh toán'}
+          </span>
           <span className="whitespace-nowrap font-black text-2xl text-primary">
-            {formatVND(order.total)}
+            {formatVND(order.compensationSource ? Math.max(0, order.total - order.compensationSource.amount) : order.total)}
           </span>
         </div>
       </div>

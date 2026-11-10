@@ -6,6 +6,7 @@ import { useCartStore, useHasCartHydrated } from '@/stores/cart.store';
 import api from '@/lib/api';
 import { getCartLineTotal, toOrderItem, type CartItem } from '@/lib/cart';
 import { RequireAuth } from '@/components/auth/RequireAuth';
+import { CompensationCheckout } from '@/components/checkout/CompensationCheckout';
 import {
   ReceiptInvoice,
   CountdownTimer,
@@ -48,7 +49,7 @@ type SavedOrder = {
 function CheckoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { items, clearCart, appliedPromo, removePromo } = useCartStore();
+  const { items, clearCart, appliedPromo, replacementSourceId, selectReplacement } = useCartStore();
   const currentPromo: AppliedPromo | null = appliedPromo;
   const hasHydrated = useHasCartHydrated();
 
@@ -181,13 +182,8 @@ function CheckoutContent() {
   }, [orderId]);
 
   useEffect(() => {
-    if (isExpired && !canRenew && currentPromo) {
-      const timer = setTimeout(() => {
-        removePromo();
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [isExpired, canRenew, currentPromo, removePromo]);
+    if (orderId && replacementSourceId) selectReplacement(null);
+  }, [orderId, replacementSourceId, selectReplacement]);
 
   // Đơn đã tạo là nguồn dữ liệu cho số tiền và nội dung QR; giỏ chỉ dùng để tạo lượt mới khi hết hạn.
   const displayItems = orderItems ?? items;
@@ -719,7 +715,12 @@ function CheckoutContent() {
 }
 
 function CheckoutForOrder() {
-  const orderId = useSearchParams().get('orderId');
+  const params = useSearchParams();
+  const orderId = params.get('orderId');
+  const replacementFor = params.get('replacementFor');
+  if (orderId && replacementFor) {
+    return <CompensationCheckout key={orderId} orderId={orderId} sourceId={replacementFor} />;
+  }
   // Đổi mã đơn sẽ tạo lại trạng thái trang, tránh hiển thị dữ liệu của đơn cũ trong lúc tải đơn mới.
   return <CheckoutContent key={orderId ?? 'empty'} />;
 }

@@ -14,6 +14,7 @@ import { InventoryState, PaymentMethod, OrderStatus, PaymentStatus } from '@pris
 import { RewardsService } from '../rewards/rewards.service.js';
 import { InventoryService, RESERVATION_DURATION_MS } from '../inventory/inventory.service.js';
 import { PaymentGatewayService } from './payment-gateway.service.js';
+import { OrderCompensationService } from '../orders/order-compensation.service.js';
 import { SepayWebhookDto } from './dto/sepay-webhook.dto.js';
 
 export const PAYMENT_TIMEOUT_MS = RESERVATION_DURATION_MS;
@@ -107,6 +108,7 @@ export class CheckoutService {
     private readonly rewardsService: RewardsService,
     private readonly inventory: InventoryService,
     private readonly gateway: PaymentGatewayService,
+    private readonly compensation?: OrderCompensationService,
   ) {
     const clientId = process.env.PAYOS_CLIENT_ID;
     const apiKey = process.env.PAYOS_API_KEY;
@@ -148,7 +150,8 @@ export class CheckoutService {
       if (!order || (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.PAYMENT_FAILED)) return false;
       if (this.deadline(order).getTime() > Date.now()) return false;
       await this.inventory.release(tx, order);
-      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
+      await this.rewardsService.restoreVoucher(tx, orderId);
+      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
       return true;
     });
   }
@@ -168,6 +171,7 @@ export class CheckoutService {
 
   async applyVoucher(orderId: string, promoCode: string, userId: string) {
     const order = await this.findOwnedOrder(orderId, userId);
+    if (order.compensationSourceId) throw new BadRequestException('Vui lòng thanh toán trên trang đơn thay thế');
 
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException(
@@ -279,6 +283,8 @@ export class CheckoutService {
       throw new NotFoundException(`Không tìm thấy đơn hàng với id: ${orderId}`);
     }
 
+    if (order.compensationSourceId) throw new BadRequestException('Vui lòng thanh toán trên trang đơn thay thế');
+
     // ── Bước 1: Chặn xử lý lặp bằng mã giao dịch. ──
     const existingPayment = await this.prisma.payment.findUnique({
       where: { idempotencyKey },
@@ -361,7 +367,8 @@ export class CheckoutService {
       }
       if (this.deadline(lockedOrder).getTime() <= Date.now()) {
         await this.inventory.release(tx, lockedOrder);
-        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
+        await this.rewardsService.restoreVoucher(tx, orderId);
+        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
         return { expired: true as const };
       }
 
@@ -423,6 +430,7 @@ export class CheckoutService {
           where: { id: orderId },
           data: {
             status: OrderStatus.PAID,
+            notifications: { create: { status: OrderStatus.PAID } },
             loyaltyPointsEarned: pointsEarned,
           },
         });
@@ -443,7 +451,7 @@ export class CheckoutService {
         // Giữ nguyên liệu đến hết hạn để khách có thể thử thanh toán lại.
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.PAYMENT_FAILED },
+          data: { status: OrderStatus.PAYMENT_FAILED, notifications: { create: { status: OrderStatus.PAYMENT_FAILED } } },
         });
       }
 
@@ -486,6 +494,7 @@ export class CheckoutService {
   // Lấy trạng thái và thời gian còn lại; nếu quá hạn thì hủy đơn và trả nguyên liệu.
   async getOrderCheckoutStatus(orderId: string, userId: string) {
     const order = await this.findOwnedOrder(orderId, userId);
+    if (order.compensationSourceId) throw new BadRequestException('Vui lòng thanh toán trên trang đơn thay thế');
     const payments = await this.prisma.payment.findMany({ where: { orderId } });
 
     const expiresAt = this.deadline(order);
@@ -624,6 +633,7 @@ export class CheckoutService {
     const pendingOrders = await this.prisma.order.findMany({
       where: {
         status: { in: [OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED, OrderStatus.CANCELLED] },
+        compensationSourceId: null,
         createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
       },
       include: {
@@ -708,6 +718,7 @@ export class CheckoutService {
         where: { id: matchedOrder.id },
         data: {
           status: OrderStatus.PAID,
+          notifications: { create: { status: OrderStatus.PAID } },
           loyaltyPointsEarned: pointsEarned,
         },
       });
@@ -743,8 +754,6 @@ export class CheckoutService {
 
   // Xử lý thông báo chuyển khoản tự động từ cổng PayOS (VietQR Pro - ACB)
   async processPayOSWebhook(webhookBody: any) {
-    this.logger.log(`[PayOS Webhook] Nhận dữ liệu webhook: ${JSON.stringify(webhookBody)}`);
-
     // 1. Phản hồi xác thực ping từ PayOS dashboard hoặc lệnh confirm webhook
     if (webhookBody?.webhookUrl || (webhookBody?.data && webhookBody.data.orderCode === 123)) {
       this.logger.log('[PayOS Webhook] Xác nhận ping URL webhook thành công');
@@ -777,10 +786,15 @@ export class CheckoutService {
       return { success: true, message: 'Ping test webhook thành công' };
     }
 
+    if (await this.compensation?.handleVerifiedWebhook(verifiedData)) {
+      return { success: true };
+    }
+
     // 3. Tìm đơn hàng tương ứng dựa trên orderCode hoặc description
     const pendingOrders = await this.prisma.order.findMany({
       where: {
         status: { in: [OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED, OrderStatus.CANCELLED] },
+        compensationSourceId: null,
         createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
       },
       include: {
@@ -869,6 +883,7 @@ export class CheckoutService {
         where: { id: matchedOrder.id },
         data: {
           status: OrderStatus.PAID,
+          notifications: { create: { status: OrderStatus.PAID } },
           loyaltyPointsEarned: pointsEarned,
         },
       });
@@ -924,6 +939,7 @@ export class CheckoutService {
     const expiredOrders = await this.prisma.order.findMany({
       where: {
         status: { in: [OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED] },
+        compensationSourceId: null,
         OR: [
           { reservationExpiresAt: { lte: now } },
           { reservationExpiresAt: null, createdAt: { lte: new Date(now.getTime() - PAYMENT_TIMEOUT_MS) } },

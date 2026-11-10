@@ -12,6 +12,7 @@ BrewLite là ứng dụng đặt đồ uống và thanh toán không tiền mặ
 - Trang checkout hiển thị QR VietQR/SePay hoặc phương thức thẻ mô phỏng. Thanh toán thành công chuyển đơn sang `PAID`, trừ `onHand` và giải phóng phần `reserved`; thao tác thanh toán dùng `Idempotency-Key` để tránh ghi nhận lặp. QR cần webhook SePay cấu hình đúng để tự xác nhận. Nút **Test nhanh** dành cho demo local.
 - Đơn hết hạn được hủy và trả nguyên liệu đã giữ. Khách có thể tạo lại **một lần** trong 2 phút tiếp theo; lần này là đơn mới với `orderId` mới và phải kiểm tra lại tồn.
 - Khách xem đơn và lịch sử; admin quản lý trạng thái đơn, voucher, nguyên liệu và công thức. Backend đã có API đọc/ghi nguyên liệu, công thức. Giao diện admin có các thao tác tương ứng, nhưng cần kiểm thử tích hợp từng thao tác trước khi demo.
+- Chuông cạnh **Giỏ hàng** hiển thị cập nhật đơn. Nếu admin hủy đơn đã thanh toán trước khi pha chế, khách nhận giá trị đã trả để chọn đơn thay thế.
 
 User Story, tiêu chí chấp nhận và phân công của nhóm nằm trong [nguồn LaTeX Assignment 1](docs/assignment1-user-stories/).
 
@@ -105,6 +106,21 @@ npm run dev
 ```
 
 Nếu DB mới, chạy phần migration/seed ở trên với Compose trước khi khởi động hai app. Không bật container `api`/`web` đồng thời với tiến trình Node ở cùng cổng.
+
+## Kiểm thử đền bù đơn bị hủy
+
+Áp migration `20261110000200_order_compensation` và chạy lại API/web đã build. Dùng hai phiên trình duyệt riêng cho khách và admin.
+
+1. Khách đặt một đơn và hoàn tất thanh toán thẻ mô phỏng. Admin vào **Quản trị → Đơn hàng → Cần xử lý**, chọn **Hủy đơn** khi đơn chưa được pha chế.
+2. Từ chuông hoặc **Lịch sử → Chi tiết đơn**, khách mở **Chọn món thay thế**. Giá trị đền bù bằng toàn bộ giá trị món nước của đơn gốc (bảo lưu trọn vẹn quyền lợi mã giảm giá cho khách, đồng thời hoàn lại voucher vào ví nếu đơn có dùng voucher đổi điểm).
+3. Đơn đồng giá vào hàng đợi ngay. Đơn rẻ hơn cần thêm món hoặc topping. Với đơn đắt hơn, khách có 5 phút để quét mã VietQR ngay trên trang BrewLite và thanh toán phần chênh lệch qua PayOS. Đơn vào hàng đợi sau khi giao dịch được xác nhận.
+4. Để kiểm tra lần thử hết hạn, tạo mã QR rồi để qua thời hạn giữ đơn. Sau khi PayOS xác nhận link hết hạn hoặc đã hủy và chưa nhận tiền, khách có thể chọn lại.
+
+Ca trả thêm trực tiếp cần `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` và webhook công khai `/api/payments/payos-webhook`. Để chạy kiểm thử với PayOS giả lập, đặt `E2E_DATABASE=1`, trỏ `DATABASE_URL` tới PostgreSQL `brewlite_test` trên localhost, áp migrations rồi chạy lệnh sau trong `backend`.
+
+```powershell
+npm run test:e2e -- test/order-compensation.e2e-spec.ts
+```
 
 ## Kiểm thử Assignment 1
 

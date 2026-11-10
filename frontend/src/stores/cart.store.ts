@@ -10,8 +10,10 @@ interface CartStore {
   items: CartItem[];
   currentUserId: string | null;
   appliedPromo: AppliedPromo | null;
+  replacementSourceId: string | null;
 
   initUserCart: (userId: string | null) => void;
+  selectReplacement: (sourceId: string | null) => void;
   addItem: (item: CartItem) => boolean;
   removeItem: (index: number) => void;
   updateQuantity: (index: number, quantity: number) => void;
@@ -28,6 +30,8 @@ const getCartKey = (userId: string | null) => {
 };
 
 const getPromoKey = (userId: string | null) => `${getCartKey(userId)}_promo`;
+const getReplacementModeKey = (userId: string) => getCartKey(userId) + '_replacement';
+const getReplacementCartKey = (userId: string, sourceId: string) => getReplacementModeKey(userId) + '_' + sourceId;
 
 const mergeCartItems = (existingItems: CartItem[], guestItems: CartItem[]): CartItem[] => {
   const merged: CartItem[] = [];
@@ -104,8 +108,12 @@ const resetCheckoutTimer = () => {
 const promoForItems = (promo: AppliedPromo | null, items: CartItem[]) =>
   recalculatePromo(promo, items.reduce((total, item) => total + getCartLineTotal(item), 0));
 
-const saveToStorage = (userId: string | null, items: CartItem[], appliedPromo: AppliedPromo | null) => {
+const saveToStorage = (userId: string | null, items: CartItem[], appliedPromo: AppliedPromo | null, replacementSourceId?: string | null) => {
   if (typeof window !== 'undefined') {
+    if (userId && replacementSourceId) {
+      localStorage.setItem(getReplacementCartKey(userId, replacementSourceId), JSON.stringify(items));
+      return;
+    }
     const key = getCartKey(userId);
     localStorage.setItem(key, JSON.stringify(items));
     if (appliedPromo) {
@@ -121,6 +129,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
   items: [],
   currentUserId: null,
   appliedPromo: null,
+  replacementSourceId: null,
 
   initUserCart: (userId: string | null) => {
     if (typeof window === 'undefined') return;
@@ -144,11 +153,30 @@ export const useCartStore = create<CartStore>((set, get) => ({
         localStorage.removeItem(guestKey);
         localStorage.removeItem(getPromoKey(null));
       }
-      set({ currentUserId: userId, items: userItems, appliedPromo });
+      const replacementSourceId = sessionStorage.getItem(getReplacementModeKey(userId));
+      set({
+        currentUserId: userId,
+        replacementSourceId,
+        items: replacementSourceId ? readCartItems(getReplacementCartKey(userId, replacementSourceId)) : userItems,
+        appliedPromo: replacementSourceId ? null : appliedPromo,
+      });
     } else {
       const appliedPromo = promoForItems(savedPromo, guestItems);
-      set({ currentUserId: null, items: guestItems, appliedPromo });
+      set({ currentUserId: null, items: guestItems, appliedPromo, replacementSourceId: null });
       saveToStorage(null, guestItems, appliedPromo);
+    }
+  },
+
+  selectReplacement: (sourceId) => {
+    const { currentUserId, replacementSourceId } = get();
+    if (!currentUserId || sourceId === replacementSourceId) return;
+    if (sourceId) {
+      sessionStorage.setItem(getReplacementModeKey(currentUserId), sourceId);
+      set({ replacementSourceId: sourceId, items: readCartItems(getReplacementCartKey(currentUserId, sourceId)), appliedPromo: null });
+    } else {
+      sessionStorage.removeItem(getReplacementModeKey(currentUserId));
+      const items = readCartItems(getCartKey(currentUserId));
+      set({ replacementSourceId: null, items, appliedPromo: promoForItems(readSavedPromo(currentUserId), items) });
     }
   },
 
@@ -163,7 +191,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
 
     const appliedPromo = promoForItems(get().appliedPromo, updatedItems);
     set({ items: updatedItems, appliedPromo });
-    saveToStorage(get().currentUserId, updatedItems, appliedPromo);
+    saveToStorage(get().currentUserId, updatedItems, appliedPromo, get().replacementSourceId);
     return true;
   },
 
@@ -173,7 +201,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
     const updatedItems = get().items.filter((_, i) => i !== index);
     const appliedPromo = promoForItems(get().appliedPromo, updatedItems);
     set({ items: updatedItems, appliedPromo });
-    saveToStorage(get().currentUserId, updatedItems, appliedPromo);
+    saveToStorage(get().currentUserId, updatedItems, appliedPromo, get().replacementSourceId);
   },
 
   updateQuantity: (index, quantity) => {
@@ -188,10 +216,16 @@ export const useCartStore = create<CartStore>((set, get) => ({
       : item);
     const appliedPromo = promoForItems(get().appliedPromo, updatedItems);
     set({ items: updatedItems, appliedPromo });
-    saveToStorage(get().currentUserId, updatedItems, appliedPromo);
+    saveToStorage(get().currentUserId, updatedItems, appliedPromo, get().replacementSourceId);
   },
 
   clearCart: () => {
+    const { currentUserId, replacementSourceId } = get();
+    if (currentUserId && replacementSourceId) {
+      localStorage.removeItem(getReplacementCartKey(currentUserId, replacementSourceId));
+      get().selectReplacement(null);
+      return;
+    }
     resetCheckoutTimer();
     if (typeof window !== 'undefined') localStorage.removeItem('brewlite_checkout_renew_count');
     set({ items: [], appliedPromo: null });
@@ -211,11 +245,13 @@ export const useCartStore = create<CartStore>((set, get) => ({
   },
 
   applyPromo: (promo) => {
+    if (get().replacementSourceId) return;
     const appliedPromo = promoForItems(promo, get().items);
     set({ appliedPromo });
     saveToStorage(get().currentUserId, get().items, appliedPromo);
   },
   removePromo: () => {
+    if (get().replacementSourceId) return;
     set({ appliedPromo: null });
     saveToStorage(get().currentUserId, get().items, null);
   },
@@ -228,7 +264,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
     });
     if (items.some((item, index) => item.stock !== get().items[index].stock)) {
       set({ items });
-      saveToStorage(get().currentUserId, items, get().appliedPromo);
+      saveToStorage(get().currentUserId, items, get().appliedPromo, get().replacementSourceId);
     }
   },
 }));

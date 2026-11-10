@@ -15,7 +15,10 @@ const REVENUE_STATUSES: OrderStatus[] = ['PAID', 'PREPARING', 'READY', 'COMPLETE
 const ADMIN_VISIBLE_ORDERS: Prisma.OrderWhereInput = {
     OR: [
         { status: { in: REVENUE_STATUSES } },
-        { status: OrderStatus.CANCELLED, payments: { some: { status: 'SUCCESS' } } },
+        { status: OrderStatus.CANCELLED, OR: [
+            { payments: { some: { status: 'SUCCESS' } } },
+            { compensationIssued: { isNot: null } },
+        ] },
     ],
 };
 const ADMIN_FORBIDDEN_TARGETS: OrderStatus[] = [
@@ -129,21 +132,29 @@ export class AdminService {
             await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${id} FOR UPDATE`;
             const order = await tx.order.findUnique({
                 where: { id },
-                include: { items: true },
+                include: {
+                    items: true,
+                    compensationIssued: true,
+                    payments: { where: { status: 'SUCCESS' }, orderBy: { createdAt: 'desc' }, take: 1 },
+                },
             });
             if (!order) throw new NotFoundException(`Không tìm thấy đơn ${id}`);
 
+            if (next === OrderStatus.CANCELLED && order.status === OrderStatus.CANCELLED && order.compensationIssued) {
+                return order;
+            }
+            if (next === OrderStatus.CANCELLED && order.status !== OrderStatus.PAID) {
+                throw new ConflictException('Chỉ có thể hủy đơn đã thanh toán và chưa bắt đầu pha chế');
+            }
             assertTransition(order.status, next);
 
-            // Đơn chưa thanh toán chỉ giữ nguyên liệu; khi hủy phải nhả lượng đã giữ.
-            if (next === OrderStatus.CANCELLED &&
-                (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED) &&
-                order.inventoryState === 'RESERVED') {
-                await this.inventory.release(tx, order);
-            }
-
-            // Hủy đơn đã thanh toán -> hoàn kho + thu hồi điểm
-            if (next === OrderStatus.CANCELLED && order.status === OrderStatus.PAID) {
+            let compensationAmount: number | undefined;
+            if (next === OrderStatus.CANCELLED) {
+                const originalOrderValue = order.total !== undefined ? order.total + (order.discount ?? 0) : undefined;
+                compensationAmount = order.compensationSourceId ? order.total : (originalOrderValue ?? order.payments[0]?.amount);
+                if (compensationAmount === undefined) {
+                    throw new ConflictException('Đơn thiếu giao dịch thanh toán để xác định giá trị đền bù');
+                }
                 if (order.inventoryState === 'CONSUMED') {
                     await this.inventory.restore(tx, order);
                 } else if (order.inventoryState === 'LEGACY') {
@@ -155,31 +166,23 @@ export class AdminService {
                         });
                     }
                 }
-                if (order.loyaltyPointsEarned > 0) {
-                    // Không để số dư điểm âm nếu khách đã dùng điểm
-                    const u = await tx.user.findUnique({ where: { id: order.userId }, select: { loyaltyPoints: true } });
-                    const refund = Math.min(order.loyaltyPointsEarned, u?.loyaltyPoints ?? 0);
-                    if (refund > 0) {
-                        const updated = await tx.user.update({
-                            where: { id: order.userId },
-                            data: { loyaltyPoints: { decrement: refund } },
-                            select: { loyaltyPoints: true },
-                        });
-                        // Ghi sổ điểm để lịch sử khớp số dư
-                        await tx.pointTransaction.create({
-                            data: {
-                                userId: order.userId,
-                                type: PointTransactionType.REFUND,
-                                points: -refund,
-                                balanceAfter: updated.loyaltyPoints,
-                                orderId: order.id,
-                            },
-                        });
-                    }
-                }
+                // Hoàn lại voucher cho khách hàng nếu đơn có sử dụng mã ưu đãi đổi điểm
+                await tx.userVoucher?.updateMany({
+                    where: { usedOrderId: id },
+                    data: { usedAt: null, usedOrderId: null },
+                });
             }
 
-            return tx.order.update({ where: { id }, data: { status: next } });
+            return tx.order.update({
+                where: { id },
+                data: {
+                    status: next,
+                    notifications: { create: { status: next } },
+                    ...(compensationAmount !== undefined && {
+                        compensationIssued: { create: { amount: compensationAmount } },
+                    }),
+                },
+            });
         });
     }
 
