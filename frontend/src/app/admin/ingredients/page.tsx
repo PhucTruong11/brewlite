@@ -37,7 +37,7 @@ interface Ingredient {
 }
 
 const MAX_AMOUNT = 99_999_999_999.999;
-const REFRESH_INTERVAL_MS = 10_000; // tự lấy dữ liệu mới mỗi 10 giây khi tab đang hiển thị
+const REFRESH_INTERVAL_MS = 3000; // tự lấy dữ liệu mới mỗi 3 giây khi tab đang hiển thị
 const UNIT_LABEL: Record<IngredientUnit, string> = { G: 'g', ML: 'ml', PIECE: 'cái' };
 const UNIT_OPTIONS: { value: IngredientUnit; label: string }[] = [
   { value: 'G', label: 'Gram (g)' },

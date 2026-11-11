@@ -7,6 +7,8 @@ import bcrypt from 'bcrypt';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/modules/prisma/prisma.service.js';
+import { PaymentGatewayService } from '../src/modules/checkout/payment-gateway.service.js';
+import { OrderCompensationService } from '../src/modules/orders/order-compensation.service.js';
 
 describe('Đền bù đơn đã thanh toán', () => {
   let app: INestApplication;
@@ -33,7 +35,8 @@ describe('Đền bù đơn đã thanh toán', () => {
     vi.stubEnv('PAYOS_CLIENT_ID', 'test-client');
     vi.stubEnv('PAYOS_API_KEY', 'test-api-key');
     vi.stubEnv('PAYOS_CHECKSUM_KEY', checksumKey);
-    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(PaymentGatewayService).useValue({ charge: async () => ({ success: true, gatewayRef: 'compensation-test' }) }).compile();
     app = module.createNestApplication();
     app.setGlobalPrefix('api');
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
@@ -53,7 +56,7 @@ describe('Đền bù đơn đã thanh toán', () => {
     await prisma.product.create({
       data: {
         id: replacementProductId, name: 'Món thay thế test', category: 'other', allowToppings: true,
-        prices: { create: [{ size: 'S', price: 40_000 }, { size: 'M', price: 45_000 }, { size: 'L', price: 55_000 }] },
+        prices: { create: [{ size: 'S', price: 50_000 }, { size: 'M', price: 55_000 }, { size: 'L', price: 60_000 }] },
       },
     });
     await prisma.topping.create({ data: { id: toppingId, name: toppingName, price: 5_000 } });
@@ -104,10 +107,10 @@ describe('Đền bù đơn đã thanh toán', () => {
     status: 'PENDING', bin: '970416', accountName: 'TEST', accountNumber: '123456', currency: 'VND',
   }));
 
-  async function paidOrder() {
+  async function paidOrder(expectedTotal = 45_000) {
     const created = await api().post('/api/orders').set('Authorization', auth())
       .send({ items: [item(originalProductId, 'S')], promoCode: voucher }).expect(201);
-    expect(created.body.data.total).toBe(45_000);
+    expect(created.body.data.total).toBe(expectedTotal);
     const id = created.body.data.id as string;
     await api().post('/api/checkout').set('Authorization', auth()).set('Idempotency-Key', randomUUID())
       .send({ orderId: id, method: 'CARD' }).expect(201);
@@ -124,14 +127,16 @@ describe('Đền bù đơn đã thanh toán', () => {
     const notice = (await feed()).body.data.items.filter((entry: { orderId: string; status: string }) =>
       entry.orderId === id && entry.status === 'CANCELLED');
     expect(notice).toHaveLength(1);
-    expect(notice[0].order.compensationIssued.amount).toBe(45_000);
+    expect(notice[0].order.compensationIssued.amount).toBe(50_000);
     await api().get(replacementPath(id)).set('Authorization', auth(adminToken)).expect(404);
     await api().patch('/api/orders/notifications/' + notice[0].id + '/read').set('Authorization', auth()).expect(200);
     expect((await prisma.orderNotification.findUniqueOrThrow({ where: { id: notice[0].id } })).readAt).not.toBeNull();
+    await prisma.productPrice.updateMany({ where: { productId: replacementProductId, size: 'S' }, data: { price: 40_000 } });
     await createReplacement(id, 'S').expect(400);
+    await prisma.productPrice.updateMany({ where: { productId: replacementProductId, size: 'S' }, data: { price: 50_000 } });
     const before = await prisma.user.findUniqueOrThrow({ where: { id: customerId } });
     const results = await Promise.all([
-      createReplacement(id, 'S', [toppingName]).expect(201), createReplacement(id, 'M').expect(201),
+      createReplacement(id, 'S').expect(201), createReplacement(id, 'S').expect(201),
     ]);
     const replacement = results[0].body.data;
     expect(replacement.status).toBe('PAID');
@@ -146,16 +151,16 @@ describe('Đền bù đơn đã thanh toán', () => {
     const id = await paidOrder();
     await adminStatus(id, 'CANCELLED').expect(200);
     const startedAt = Date.now();
-    const order = (await createReplacement(id, 'L').expect(201)).body.data;
-    expect(order.status).toBe('PENDING');
-    const deadline = (await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).reservationExpiresAt!.getTime();
-    expect(deadline).toBeGreaterThanOrEqual(startedAt + 5 * 60 * 1000);
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000);
-    await api().post('/api/checkout').set('Authorization', auth()).set('Idempotency-Key', randomUUID())
-      .send({ orderId: order.id, method: 'CARD' }).expect(400);
     const linkId = randomUUID();
     const provider = mockLink(linkId);
     try {
+      const order = (await createReplacement(id, 'L').expect(201)).body.data;
+      expect(order.status).toBe('PENDING');
+      const deadline = (await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).reservationExpiresAt!.getTime();
+      expect(deadline).toBeGreaterThanOrEqual(startedAt + 5 * 60 * 1000);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000);
+      await api().post('/api/checkout').set('Authorization', auth()).set('Idempotency-Key', randomUUID())
+        .send({ orderId: order.id, method: 'CARD' }).expect(400);
       const paymentLink = await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).expect(201);
       expect(paymentLink.body.data).toEqual({ qrCodeUrl: expect.stringMatching(/^data:image\/png;base64,/) });
       await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).expect(201);
@@ -164,7 +169,7 @@ describe('Đền bù đơn đã thanh toán', () => {
       expect(payload.amount).toBe(10_000);
       expect(payload.expiredAt).toBe(Math.floor(deadline / 1000));
       const current = (await api().get(replacementPath(id)).set('Authorization', auth()).expect(200)).body.data.replacement;
-      expect(current.paymentLink).toEqual(paymentLink.body.data);
+      expect(current.paymentLink).toMatchObject(paymentLink.body.data);
       expect(current.remainingSeconds).toBeGreaterThan(120);
       expect(current.remainingSeconds).toBeLessThanOrEqual(300);
       const payos = new PayOS({ clientId: 'test', apiKey: 'test', checksumKey });
@@ -195,11 +200,11 @@ describe('Đền bù đơn đã thanh toán', () => {
   it('đơn chênh lệch hết hạn nhả nguyên liệu và cho chọn lại bằng lượt đền bù cũ', async () => {
     const id = await paidOrder();
     await adminStatus(id, 'CANCELLED').expect(200);
-    const attempt = (await createReplacement(id, 'L').expect(201)).body.data;
     const linkId = randomUUID();
     const provider = mockLink(linkId);
     const lookup = vi.spyOn(PaymentRequests.prototype, 'get');
     try {
+      const attempt = (await createReplacement(id, 'L').expect(201)).body.data;
       await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).expect(201);
       lookup.mockResolvedValue({
         id: linkId, orderCode: provider.mock.calls[0][0].orderCode, amount: 10_000,
@@ -211,14 +216,88 @@ describe('Đền bù đơn đã thanh toán', () => {
       });
       const status = await api().get(replacementPath(id)).set('Authorization', auth()).expect(200);
       expect(lookup).toHaveBeenCalledWith(linkId);
-      expect(status.body.data).toEqual({ amount: 45_000, replacement: null });
+      expect(status.body.data).toMatchObject({ amount: 50_000, replacement: null });
       expect((await prisma.order.findUniqueOrThrow({ where: { id: attempt.id } })).inventoryState).toBe('RELEASED');
-      const next = (await createReplacement(id, 'M').expect(201)).body.data;
+      const next = (await createReplacement(id, 'S').expect(201)).body.data;
       expect(next.id).not.toBe(attempt.id);
       expect(next.status).toBe('PAID');
     } finally {
       provider.mockRestore();
       lookup.mockRestore();
     }
+  });
+
+  it('trả thêm 5.000đ không được cộng điểm chỉ vì giá món vượt mốc 10.000đ', async () => {
+    await prisma.productPrice.updateMany({ where: { productId: originalProductId }, data: { price: 55_000 } });
+    const id = await paidOrder(50_000);
+    await adminStatus(id, 'CANCELLED').expect(200);
+    const linkId = randomUUID();
+    const provider = mockLink(linkId);
+    const lookup = vi.spyOn(PaymentRequests.prototype, 'get').mockResolvedValue({ id: linkId, status: 'PENDING', amountPaid: 0 } as never);
+    const cancel = vi.spyOn(PaymentRequests.prototype, 'cancel').mockResolvedValue({ id: linkId, status: 'CANCELLED', amountPaid: 0 } as never);
+    try {
+      const before = (await prisma.user.findUniqueOrThrow({ where: { id: customerId } })).loyaltyPoints;
+      const order = (await createReplacement(id, 'L').expect(201)).body.data;
+      await api().post(replacementPath(id) + '/card').set('Authorization', auth()).send({ method: 'CARD' }).expect(201);
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).loyaltyPointsEarned).toBe(0);
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: customerId } })).loyaltyPoints).toBe(before);
+      expect(await prisma.pointTransaction.count({ where: { orderId: order.id } })).toBe(0);
+      expect((await api().get(replacementPath(id)).set('Authorization', auth()).expect(200)).body.data.replacement.loyaltyPointsEarned).toBe(0);
+    } finally {
+      provider.mockRestore(); lookup.mockRestore(); cancel.mockRestore();
+      await prisma.productPrice.updateMany({ where: { productId: originalProductId }, data: { price: 50_000 } });
+    }
+  });
+
+  it('quay lại đơn chênh lệch không giữ kho hai lần; chỉ trả kho khi PayOS xác nhận hủy chưa nhận tiền', async () => {
+    const id = await paidOrder();
+    await adminStatus(id, 'CANCELLED').expect(200);
+    const linkId = randomUUID(), provider = mockLink(linkId);
+    const lookup = vi.spyOn(PaymentRequests.prototype, 'get');
+    const cancel = vi.spyOn(PaymentRequests.prototype, 'cancel');
+    try {
+      const created = (await createReplacement(id, 'L').expect(201)).body.data;
+      const held = (await prisma.ingredient.findUniqueOrThrow({ where: { id: ingredientId } })).reserved;
+      expect((await createReplacement(id, 'L').expect(201)).body.data.id).toBe(created.id);
+      expect((await prisma.ingredient.findUniqueOrThrow({ where: { id: ingredientId } })).reserved).toEqual(held);
+      lookup.mockResolvedValue({ id: linkId, status: 'PAID', amountPaid: 10_000 } as never);
+      await api().post(replacementPath(id) + '/cancel').set('Authorization', auth()).expect(409);
+      await api().post(replacementPath(id) + '/card').set('Authorization', auth()).send({ method: 'CARD' }).expect(409);
+      expect(cancel).not.toHaveBeenCalled();
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: created.id } })).inventoryState).toBe('RESERVED');
+      lookup.mockRejectedValue(new Error('provider unavailable'));
+      await api().post(replacementPath(id) + '/cancel').set('Authorization', auth()).expect(409);
+      lookup.mockResolvedValue({ id: linkId, status: 'PENDING', amountPaid: 0 } as never);
+      cancel.mockResolvedValue({ id: linkId, status: 'CANCELLED', amountPaid: 0 } as never);
+      await Promise.all([0, 1].map(() => api().post(replacementPath(id) + '/cancel').set('Authorization', auth()).expect(201)));
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: created.id } })).inventoryState).toBe('RELEASED');
+    } finally { provider.mockRestore(); lookup.mockRestore(); cancel.mockRestore(); }
+  });
+
+  it('lỗi PayOS không phát mã QR khác không được cổng thanh toán theo dõi', async () => {
+    const id = await paidOrder();
+    await adminStatus(id, 'CANCELLED').expect(200);
+    const provider = vi.spyOn(PaymentRequests.prototype, 'create').mockRejectedValue(new Error('PayOS unavailable'));
+    try {
+      const order = (await createReplacement(id, 'L').expect(201)).body.data;
+      await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).expect(409);
+      expect(await prisma.compensationPayosLink.count({ where: { orderId: order.id } })).toBe(0);
+      expect((await api().get(replacementPath(id)).set('Authorization', auth()).expect(200)).body.data.replacement.paymentLink).toBeNull();
+    } finally { provider.mockRestore(); }
+  });
+
+  it('chế độ local chưa cấu hình PayOS vẫn tự trả kho khi mã demo hết hạn', async () => {
+    const id = await paidOrder();
+    await adminStatus(id, 'CANCELLED').expect(200);
+    const service = app.get(OrderCompensationService) as unknown as { payos?: unknown };
+    const saved = service.payos; service.payos = undefined;
+    try {
+      const attempt = (await createReplacement(id, 'L').expect(201)).body.data;
+      expect((await prisma.compensationPayosLink.findUniqueOrThrow({ where: { orderId: attempt.id } })).id).toBe('QR-' + attempt.id);
+      await prisma.order.update({ where: { id: attempt.id }, data: { reservationExpiresAt: new Date(Date.now() - 1000) } });
+      expect((await api().get(replacementPath(id)).set('Authorization', auth()).expect(200)).body.data.replacement).toBeNull();
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: attempt.id } })).inventoryState).toBe('RELEASED');
+    } finally { service.payos = saved; }
   });
 });

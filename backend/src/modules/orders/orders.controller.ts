@@ -38,6 +38,11 @@ export class OrdersController {
     };
   }
 
+  @Get('pending-checkout')
+  async getPendingCheckout(@CurrentUser() user: { id: string }) {
+    return { data: await this.ordersService.findPendingCheckout(user.id) };
+  }
+
   @Get('me')
   async getMyOrders(@CurrentUser() user: { id: string }) {
     const orders = await this.ordersService.findAllByUser(user.id);

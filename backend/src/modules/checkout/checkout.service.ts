@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PayOS } from '@payos/node';
+import { PayOS, NotFoundError } from '@payos/node';
 import QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { InventoryState, PaymentMethod, OrderStatus, PaymentStatus } from '@prisma/client';
@@ -24,8 +24,8 @@ export interface VoucherRule {
   description: string;
   discountType: 'FIXED' | 'PERCENT';
   discountValue: number;
-  minOrderValue: number; 
-  maxDiscount?: number;  
+  minOrderValue: number;
+  maxDiscount?: number;
 }
 
 export const VALID_VOUCHERS: Record<string, VoucherRule> = {
@@ -154,6 +154,43 @@ export class CheckoutService {
       await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
       return true;
     });
+  }
+
+  async cancelPendingOrder(orderId: string, userId: string) {
+    await this.findOwnedOrder(orderId, userId);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${orderId} FOR UPDATE`;
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
+      if (!order || order.userId !== userId) throw new NotFoundException('Không tìm thấy đơn hàng');
+      if (order.compensationSourceId) throw new BadRequestException('Vui lòng hủy đơn trên trang đơn thay thế');
+      if (order.status === OrderStatus.CANCELLED) return { status: order.status };
+      if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.PAYMENT_FAILED) {
+        throw new ConflictException('Đơn đã được thanh toán hoặc xử lý. Vui lòng xem lịch sử đơn hàng.');
+      }
+      if (this.payos) {
+        try {
+          const link = await this.payos.paymentRequests.get(this.getPayosOrderCode(orderId), { timeout: 3500, maxRetries: 0 });
+          if (link.amountPaid > 0 || !['PENDING', 'CANCELLED', 'EXPIRED'].includes(link.status)) {
+            throw new ConflictException('Giao dịch đã nhận tiền hoặc đang xử lý. Vui lòng kiểm tra trạng thái đơn.');
+          }
+          if (link.status === 'PENDING') {
+            const cancelled = await this.payos.paymentRequests.cancel(this.getPayosOrderCode(orderId), 'Khách quay lại sửa giỏ hàng', { timeout: 3500, maxRetries: 0 });
+            if (cancelled.status !== 'CANCELLED' || cancelled.amountPaid > 0) throw new Error('Payment not cancelled');
+          }
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) {
+            throw new ConflictException('Chưa hủy được mã thanh toán. Vui lòng kiểm tra trạng thái đơn và thử lại.');
+          }
+        }
+      }
+      await this.inventory.release(tx, order);
+      await this.rewardsService.restoreVoucher(tx, orderId);
+      await tx.order.update({ where: { id: orderId }, data: {
+        status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } },
+      } });
+      this.payosLinkCache.delete(orderId);
+      return { status: OrderStatus.CANCELLED };
+    }, { timeout: 15000 });
   }
 
   private async findOwnedOrder(orderId: string, userId: string) {
@@ -376,7 +413,7 @@ export class CheckoutService {
         throw new BadRequestException('Số tiền thanh toán không hợp lệ');
       }
 
-      // ── Bước 5: Gọi cổng thanh toán mô phỏng với số tiền đã xác minh. 
+      // ── Bước 5: Gọi cổng thanh toán mô phỏng với số tiền đã xác minh.
       const gatewayResult =
         lockedOrder.total === 0
           ? { success: true, gatewayRef: `FREE-VOUCHER-${Date.now()}` }
@@ -539,6 +576,7 @@ export class CheckoutService {
             description,
             cancelUrl: `${clientOrigin}/checkout?orderId=${order.id}&status=CANCELLED`,
             returnUrl: `${clientOrigin}/checkout?orderId=${order.id}&status=PAID`,
+            expiredAt: Math.floor(expiresAt.getTime() / 1000),
           });
 
           let payosQr = '';
@@ -582,6 +620,7 @@ export class CheckoutService {
       discount: order.discount,
       promoCode: order.promoCode,
       total: order.total,
+      loyaltyPointsEarned: order.loyaltyPointsEarned,
       qrCodeUrl,
       bankInfo: {
         bankName,
@@ -663,13 +702,13 @@ export class CheckoutService {
 
     // 4. Kiểm tra số tiền chuyển
     const transferAmount = Number(payload.transferAmount || 0);
-    if (transferAmount > 0 && transferAmount < matchedOrder.total) {
+    if (!Number.isSafeInteger(transferAmount) || transferAmount !== matchedOrder.total) {
       this.logger.warn(
         `[SePay Webhook] Số tiền ${transferAmount}đ nhỏ hơn tổng tiền đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
       );
       return {
         success: false,
-        message: `Số tiền chuyển (${transferAmount}đ) không đủ cho đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
+        message: `Số tiền chuyển (${transferAmount}đ) không khớp đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
       };
     }
 
@@ -828,13 +867,13 @@ export class CheckoutService {
 
     // 4. Kiểm tra số tiền chuyển
     const transferAmount = Number(verifiedData.amount || 0);
-    if (transferAmount > 0 && transferAmount < matchedOrder.total) {
+    if (!Number.isSafeInteger(transferAmount) || transferAmount !== matchedOrder.total) {
       this.logger.warn(
-        `[PayOS Webhook] Số tiền ${transferAmount}đ nhỏ hơn đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
+        `[PayOS Webhook] Số tiền ${transferAmount}đ không khớp đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
       );
       return {
         success: false,
-        message: `Số tiền chuyển (${transferAmount}đ) không đủ cho đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
+        message: `Số tiền chuyển (${transferAmount}đ) không khớp đơn hàng #${matchedOrder.id} (${matchedOrder.total}đ)`,
       };
     }
 
@@ -851,13 +890,17 @@ export class CheckoutService {
         return { duplicate: true, payment: existingPayment };
       }
 
+      const lockedOrder = await tx.order.findUnique({ where: { id: matchedOrder.id }, include: { items: { include: { product: true } } } });
+      if (!lockedOrder || ![OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED].includes(lockedOrder.status as 'PENDING' | 'PAYMENT_FAILED') ||
+          ![InventoryState.RESERVED, InventoryState.LEGACY].includes(lockedOrder.inventoryState as 'RESERVED' | 'LEGACY')) {
+        return { requiresReview: true };
+      }
+
       // Trừ kho nguyên liệu
-      if (matchedOrder.inventoryState === InventoryState.RESERVED) {
-        await this.inventory.consume(tx, matchedOrder);
-      } else if (matchedOrder.inventoryState === InventoryState.RELEASED) {
-        await tx.order.update({ where: { id: matchedOrder.id }, data: { inventoryState: InventoryState.CONSUMED } });
-      } else if (matchedOrder.inventoryState === InventoryState.LEGACY) {
-        for (const item of matchedOrder.items) {
+      if (lockedOrder.inventoryState === InventoryState.RESERVED) {
+        await this.inventory.consume(tx, lockedOrder);
+      } else if (lockedOrder.inventoryState === InventoryState.LEGACY) {
+        for (const item of lockedOrder.items) {
           if (item.productId && item.product) {
             await tx.product.updateMany({
               where: { id: item.productId, stock: { gte: item.qty } },
@@ -869,18 +912,18 @@ export class CheckoutService {
 
       const payment = await tx.payment.create({
         data: {
-          orderId: matchedOrder.id,
+          orderId: lockedOrder.id,
           idempotencyKey,
-          amount: matchedOrder.total,
+          amount: lockedOrder.total,
           method: PaymentMethod.EWALLET,
           status: PaymentStatus.SUCCESS,
         },
       });
 
-      const pointsEarned = Math.floor(matchedOrder.total / 10_000);
+      const pointsEarned = Math.floor(lockedOrder.total / 10_000);
 
       const updatedOrder = await tx.order.update({
-        where: { id: matchedOrder.id },
+        where: { id: lockedOrder.id },
         data: {
           status: OrderStatus.PAID,
           notifications: { create: { status: OrderStatus.PAID } },
@@ -888,25 +931,30 @@ export class CheckoutService {
         },
       });
 
-      if (pointsEarned > 0 && matchedOrder.userId) {
+      if (pointsEarned > 0 && lockedOrder.userId) {
         await this.rewardsService.earnPoints(tx, {
-          id: matchedOrder.id,
-          userId: matchedOrder.userId,
-          total: matchedOrder.total,
+          id: lockedOrder.id,
+          userId: lockedOrder.userId,
+          total: lockedOrder.total,
         });
       }
 
-      if (matchedOrder.promoCode && matchedOrder.userId) {
+      if (lockedOrder.promoCode && lockedOrder.userId) {
         await this.rewardsService.consumeVoucher(
           tx,
-          matchedOrder.userId,
-          matchedOrder.promoCode,
-          matchedOrder.id,
+          lockedOrder.userId,
+          lockedOrder.promoCode,
+          lockedOrder.id,
         );
       }
 
       return { duplicate: false, payment, order: updatedOrder, pointsEarned };
     });
+
+    if ('requiresReview' in transactionResult) {
+      this.logger.error(`[PayOS Webhook] Giao dịch của đơn ${matchedOrder.id} cần đối soát vì đơn không còn giữ nguyên liệu`);
+      return { success: true, requiresReview: true, orderId: matchedOrder.id };
+    }
 
     this.logger.log(`[PayOS Webhook] Đơn hàng #${matchedOrder.id} đã thanh toán thành công qua PayOS!`);
     return {
@@ -950,7 +998,12 @@ export class CheckoutService {
     });
     let cancelled = 0;
     for (const order of expiredOrders) {
-      if (await this.cancelExpiredOrder(order.id)) cancelled++;
+      try {
+        if (await this.cancelExpiredOrder(order.id)) cancelled++;
+      } catch (error) {
+        // Một đơn dữ liệu cũ bị lệch không được giữ kho của các đơn hết hạn phía sau.
+        this.logger.error(`Không thể hủy đơn hết hạn ${order.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     if (cancelled > 0) {
       this.logger.warn(

@@ -16,6 +16,7 @@ export type Compensation = {
     status: OrderStatus;
     total: number;
     amountDue: number;
+    loyaltyPointsEarned: number;
     remainingSeconds: number;
     canPay: boolean;
     paymentLink: { qrCodeUrl: string; checkoutUrl?: string } | null;

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { PromotionsService } from '../promotions/promotions.service.js';
@@ -22,27 +22,44 @@ export class OrdersService {
             throw new BadRequestException('Giỏ hàng không được rỗng');
         }
 
-        const preview = await this.inventory.prepareCart(dto.items);
-        if (preview.shortages.length) {
-            throw new BadRequestException(`Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`);
-        }
-        const calculatedTotal = preview.subtotal;
-
-        let finalTotal = calculatedTotal;
-        let finalDiscount = 0;
-
-        if (dto.promoCode) {
-            await this.rewardsService.assertVoucherUsable(userId, dto.promoCode);
-            const promoResult = await this.promotionsService.applyPromotion({
-                code: dto.promoCode,
-                subtotal: calculatedTotal
-            });
-
-            finalDiscount = promoResult.discountAmount;
-            finalTotal -= finalDiscount;
-        }
-
         const order = await this.prisma.$transaction(async (tx) => {
+            // Một khách chỉ có một đơn thường đang giữ nguyên liệu; bấm lại sẽ dùng đúng đơn đó.
+            await tx.$queryRaw`SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(${'checkout:' + userId}))) AS checkout_lock`;
+            const pending = await tx.order.findFirst({
+                where: {
+                    userId, compensationSourceId: null, inventoryState: 'RESERVED',
+                    status: { in: ['PENDING', 'PAYMENT_FAILED'] },
+                    reservationExpiresAt: { gt: new Date() },
+                },
+                orderBy: { createdAt: 'desc' }, include: { items: true },
+            });
+            if (pending) {
+                const signature = (items: { productId: string | null; size: string; qty: number; toppings?: string[] }[], promo?: string | null) =>
+                    JSON.stringify([items.map(item => JSON.stringify([item.productId, item.size, item.qty, [...(item.toppings ?? [])].sort()])).sort(), promo || null]);
+                if (signature(pending.items, pending.promoCode) !== signature(dto.items, dto.promoCode)) {
+                    throw new ConflictException('Bạn có đơn đang chờ thanh toán. Vui lòng tiếp tục hoặc hủy đơn chờ trước khi đổi giỏ hàng.');
+                }
+                return pending;
+            }
+            const preview = await this.inventory.prepareCart(dto.items, tx);
+            if (preview.shortages.length) {
+                throw new BadRequestException(`Không đủ nguyên liệu: ${preview.shortages.map((entry) => entry.ingredientName).join(', ')}`);
+            }
+            const calculatedTotal = preview.subtotal;
+
+            let finalTotal = calculatedTotal;
+            let finalDiscount = 0;
+
+            if (dto.promoCode) {
+                await this.rewardsService.assertVoucherUsable(userId, dto.promoCode);
+                const promoResult = await this.promotionsService.applyPromotion({
+                    code: dto.promoCode,
+                    subtotal: calculatedTotal
+                });
+
+                finalDiscount = promoResult.discountAmount;
+                finalTotal -= finalDiscount;
+            }
             const cart = await this.inventory.prepareCart(dto.items, tx);
             if (cart.subtotal !== calculatedTotal) {
                 throw new BadRequestException('Giá món vừa thay đổi, vui lòng kiểm tra lại giỏ hàng');
@@ -72,6 +89,18 @@ export class OrdersService {
         });
 
         return order;
+    }
+
+    async findPendingCheckout(userId: string) {
+        if (!userId) throw new UnauthorizedException('Vui lòng đăng nhập');
+        return this.prisma.order.findFirst({
+            where: {
+                userId, compensationSourceId: null, inventoryState: 'RESERVED',
+                status: { in: ['PENDING', 'PAYMENT_FAILED'] },
+                reservationExpiresAt: { gt: new Date() },
+            },
+            orderBy: { createdAt: 'desc' }, include: { items: true },
+        });
     }
 
     async findAllByUser(userId: string) {

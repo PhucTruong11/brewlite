@@ -54,6 +54,13 @@ export class CheckoutController {
     );
   }
 
+  @Post(':orderId/cancel')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async cancelPendingOrder(@Param('orderId') orderId: string, @CurrentUser() user: { id: string }) {
+    return this.checkoutService.cancelPendingOrder(orderId, user.id);
+  }
+
   @Get('order/:orderId')
   @UseGuards(JwtAuthGuard)
   async getCheckoutsByOrder(@Param('orderId') orderId: string, @CurrentUser() user: { id: string }) {

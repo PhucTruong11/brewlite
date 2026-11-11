@@ -1,7 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
-import { getCartItemKey, getCartLineTotal, type CartItem } from '../lib/cart';
+import { getCartItemKey, getCartLineTotal, getCheckoutSignature, type CartItem } from '../lib/cart';
 import { recalculatePromo, type AppliedPromo } from '../lib/voucher';
 
 export type { CartItem } from '../lib/cart';
@@ -11,6 +11,11 @@ interface CartStore {
   currentUserId: string | null;
   appliedPromo: AppliedPromo | null;
   replacementSourceId: string | null;
+  hasHydrated: boolean;
+  pendingCheckout: { orderId: string; signature: string } | null;
+  rememberCheckout: (orderId: string, signature: string) => void;
+  forgetCheckout: (orderId: string) => void;
+  completeCheckout: (orderId: string) => void;
 
   initUserCart: (userId: string | null) => void;
   selectReplacement: (sourceId: string | null) => void;
@@ -157,9 +162,39 @@ export const useCartStore = create<CartStore>((set, get) => ({
   currentUserId: null,
   appliedPromo: null,
   replacementSourceId: null,
+  hasHydrated: false,
+  pendingCheckout: null,
+
+  rememberCheckout: (orderId, signature) => {
+    const { currentUserId } = get();
+    if (!currentUserId) return;
+    const pendingCheckout = { orderId, signature };
+    localStorage.setItem(getCartKey(currentUserId) + '_checkout', JSON.stringify(pendingCheckout));
+    set({ pendingCheckout });
+  },
+  forgetCheckout: (orderId) => {
+    if (get().pendingCheckout?.orderId !== orderId) return;
+    localStorage.removeItem(getCartKey(get().currentUserId) + '_checkout');
+    set({ pendingCheckout: null });
+  },
+  completeCheckout: (orderId) => {
+    const state = get();
+    if (state.pendingCheckout?.orderId !== orderId) return;
+    if (!state.replacementSourceId && state.pendingCheckout.signature === getCheckoutSignature(state.items, state.appliedPromo?.code)) {
+      state.clearCart();
+    } else {
+      state.forgetCheckout(orderId);
+    }
+  },
 
   initUserCart: (userId: string | null) => {
     if (typeof window === 'undefined') return;
+
+    let pendingCheckout: CartStore['pendingCheckout'] = null;
+    try {
+      const saved = userId ? JSON.parse(localStorage.getItem(getCartKey(userId) + '_checkout') || 'null') : null;
+      if (saved && typeof saved.orderId === 'string' && typeof saved.signature === 'string') pendingCheckout = saved;
+    } catch { /* Bỏ qua dữ liệu lưu cũ không hợp lệ. */ }
 
     const guestKey = getCartKey(null);
     const guestItems = readCartItems(guestKey);
@@ -182,6 +217,8 @@ export const useCartStore = create<CartStore>((set, get) => ({
       }
       const replacementSourceId = getSessionItem(getReplacementModeKey(userId));
       set({
+        hasHydrated: true,
+        pendingCheckout,
         currentUserId: userId,
         replacementSourceId,
         items: replacementSourceId ? readCartItems(getReplacementCartKey(userId, replacementSourceId)) : userItems,
@@ -189,7 +226,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       });
     } else {
       const appliedPromo = promoForItems(savedPromo, guestItems);
-      set({ currentUserId: null, items: guestItems, appliedPromo, replacementSourceId: null });
+      set({ currentUserId: null, items: guestItems, appliedPromo, replacementSourceId: null, pendingCheckout: null, hasHydrated: true });
       saveToStorage(null, guestItems, appliedPromo);
     }
   },
@@ -258,6 +295,8 @@ export const useCartStore = create<CartStore>((set, get) => ({
     set({ items: [], appliedPromo: null });
     if (typeof window !== 'undefined') {
       const key = getCartKey(get().currentUserId);
+      localStorage.removeItem(key + '_checkout');
+      set({ pendingCheckout: null });
       localStorage.removeItem(key);
       localStorage.removeItem(getPromoKey(get().currentUserId));
     }
@@ -296,4 +335,4 @@ export const useCartStore = create<CartStore>((set, get) => ({
   },
 }));
 
-export const useHasCartHydrated = () => true;
+export const useHasCartHydrated = () => useCartStore(state => state.hasHydrated);

@@ -6,8 +6,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
-import { useCartStore } from '@/stores/cart.store';
-import { getCartItemKey, toOrderItem } from '@/lib/cart';
+import { useCartStore, useHasCartHydrated } from '@/stores/cart.store';
+import { getCartItemKey, getCheckoutSignature, toOrderItem } from '@/lib/cart';
+import { pendingOrderSignature, type PendingOrder } from '@/lib/checkout';
 import { cartValidationMessage, validateCart } from '@/lib/validate-cart';
 import { getCompensation, replacementCheckoutHref, replacementPath } from '@/lib/order-compensation';
 import type { ApiResponse, OrderStatus } from '@/types';
@@ -50,6 +51,30 @@ export function CartContent({ onClose }: CartContentProps) {
   const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const hasHydrated = useHasCartHydrated();
+  const pendingCheckout = useQuery({
+    queryKey: ['orders', 'pending-checkout', user?.id],
+    queryFn: async () => (await api.get<{ data: PendingOrder | null }>('/orders/pending-checkout')).data.data,
+    enabled: hasHydrated && isAuthenticated && !authLoading && !replacementSourceId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
+    refetchInterval: 5_000,
+  });
+  const pendingOrder = !replacementSourceId ? pendingCheckout.data : null;
+  const compensation = useQuery({
+    queryKey: ['replacement', user?.id, replacementSourceId],
+    queryFn: () => getCompensation(replacementSourceId!),
+    enabled: hasHydrated && !!replacementSourceId && !!user,
+    refetchOnMount: 'always',
+    refetchInterval: query => query.state.data?.replacement?.status === 'PENDING' ? 5_000 : false,
+    retry: false,
+  });
+  const pendingReplacement = replacementSourceId && compensation.data?.replacement?.status === 'PENDING'
+    ? compensation.data.replacement : null;
+  const hasPendingOrder = !!pendingOrder || !!pendingReplacement;
+  const cartLocked = hasPendingOrder || isLoading || (isAuthenticated &&
+    (replacementSourceId ? compensation.isPending : pendingCheckout.isPending));
 
   // Xóa mã giảm giá nếu đang trong chế độ đền bù / đổi món
   useEffect(() => {
@@ -92,18 +117,12 @@ export function CartContent({ onClose }: CartContentProps) {
   const inventoryCheck = useQuery({
     queryKey: ['cart', 'ingredients', cartSignature],
     queryFn: () => validateCart(items),
-    enabled: items.length > 0,
+    enabled: hasHydrated && items.length > 0 && !hasPendingOrder,
     staleTime: 0,
     refetchOnWindowFocus: 'always',
     refetchInterval: 10_000,
   });
-  const isOverStock = inventoryCheck.data?.available === false;
-  const compensation = useQuery({
-    queryKey: ['replacement', user?.id, replacementSourceId],
-    queryFn: () => getCompensation(replacementSourceId!),
-    enabled: !!replacementSourceId && !!user,
-    retry: false,
-  });
+  const isOverStock = !hasPendingOrder && inventoryCheck.data?.available === false;
   const replacementAmount = compensation.data?.amount ?? 0;
   const replacementDifference = (inventoryCheck.data?.subtotal ?? subtotal) - replacementAmount;
 
@@ -135,7 +154,7 @@ export function CartContent({ onClose }: CartContentProps) {
 
   const handleCheckoutClick = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (submittingRef.current || authLoading) return;
+    if (submittingRef.current || authLoading || promoLoading) return;
     if (!isAuthenticated) {
       setShowLoginModal(true);
       return;
@@ -146,6 +165,28 @@ export function CartContent({ onClose }: CartContentProps) {
     setErrorMsg(null);
     let navigated = false;
     try {
+      if (replacementSourceId) {
+        const latest = await compensation.refetch();
+        if (latest.isError) throw new Error('Không kiểm tra được đơn thay thế. Vui lòng thử lại.');
+        if (latest.data?.replacement?.status === 'PENDING') {
+          if (onClose) onClose();
+          router.push(replacementCheckoutHref(latest.data.replacement.id, replacementSourceId));
+          navigated = true;
+          return;
+        }
+      }
+      if (!replacementSourceId) {
+        const pending = await pendingCheckout.refetch();
+        if (pending.isError) throw new Error('Không kiểm tra được đơn đang chờ. Vui lòng thử lại.');
+        if (pending.data) {
+          if (useCartStore.getState().currentUserId !== user?.id) return;
+          useCartStore.getState().rememberCheckout(pending.data.id, pendingOrderSignature(pending.data));
+          if (onClose) onClose();
+          router.push(`/checkout?orderId=${encodeURIComponent(pending.data.id)}`);
+          navigated = true;
+          return;
+        }
+      }
       const cartBeforeCheck = JSON.stringify(useCartStore.getState().items.map(toOrderItem));
       const latest = await inventoryCheck.refetch();
       if (!latest.data?.available) {
@@ -175,6 +216,8 @@ export function CartContent({ onClose }: CartContentProps) {
       });
       const orderId = response.data.data?.id;
       if (!orderId) throw new Error('Máy chủ không trả về mã đơn hàng.');
+      if (useCartStore.getState().currentUserId !== user?.id) return;
+      useCartStore.getState().rememberCheckout(orderId, getCheckoutSignature(currentCart.items, currentCart.appliedPromo?.code));
       localStorage.removeItem('brewlite_checkout_renew_count');
       if (onClose) onClose();
       router.push(`/checkout?orderId=${encodeURIComponent(orderId)}`);
@@ -192,6 +235,30 @@ export function CartContent({ onClose }: CartContentProps) {
     }
   };
 
+  const handleCancelPending = async () => {
+    if ((!pendingOrder && !pendingReplacement) || submittingRef.current) return;
+    submittingRef.current = true;
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      if (pendingReplacement && replacementSourceId) {
+        await api.post(replacementPath(replacementSourceId) + '/cancel');
+        await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, replacementSourceId] });
+      } else if (pendingOrder) {
+        await api.post(`/checkout/${pendingOrder.id}/cancel`);
+        useCartStore.getState().forgetCheckout(pendingOrder.id);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['orders', 'pending-checkout', user?.id] });
+      await inventoryCheck.refetch();
+    } catch (error) {
+      const message = isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : null;
+      setErrorMsg(message || 'Chưa hủy được đơn chờ. Vui lòng thử lại.');
+    } finally {
+      submittingRef.current = false;
+      setIsLoading(false);
+    }
+  };
+
   const confirmLogin = () => {
     setShowLoginModal(false);
     if (onClose) onClose();
@@ -199,6 +266,7 @@ export function CartContent({ onClose }: CartContentProps) {
   };
 
   const handleApplyPromo = async (codeToApply?: string) => {
+    if (cartLocked) return;
     const targetCode = codeToApply || promoCode;
     if (!targetCode.trim()) {
       setPromoMsg({ type: 'error', text: 'Vui lòng nhập mã ưu đãi!' });
@@ -260,10 +328,24 @@ export function CartContent({ onClose }: CartContentProps) {
     </div>
   );
 
+  const pendingBanner = hasPendingOrder && (
+    <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm" role="status">
+      <p className="font-bold text-primary">Bạn có đơn đang chờ thanh toán</p>
+      <p className="mt-1">Nguyên liệu đang được giữ cho đơn này. Tiếp tục đơn cũ, hoặc hủy đơn chờ để sửa giỏ; các món đã chọn vẫn được giữ lại.</p>
+      <div className="mt-2 flex flex-wrap gap-4">
+        <button type="button" disabled={isLoading} onClick={handleCheckoutClick} className="font-semibold text-primary underline">Tiếp tục thanh toán</button>
+        <button type="button" disabled={isLoading} onClick={handleCancelPending} className="font-semibold text-red-700 underline">Hủy đơn chờ để sửa giỏ</button>
+      </div>
+    </div>
+  );
+
+  if (!hasHydrated || authLoading) return <p className="p-6 text-center text-sm text-text/70">Đang tải giỏ hàng...</p>;
+
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         {replacementBanner}
+        {pendingBanner}
         <div className="bg-gray-100 p-6 rounded-full mb-4">
           <ShoppingBag size={48} className="text-gray-300" />
         </div>
@@ -293,12 +375,13 @@ export function CartContent({ onClose }: CartContentProps) {
           {/* Danh sách sản phẩm */}
           <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background/50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {replacementBanner}
+            {pendingBanner}
             <h2 className="font-bold text-lg text-text mb-4">
               Món đã chọn ({totalItems()})
             </h2>
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
               {items.map((item, index) => (
-                <CartItemRow key={getCartItemKey(item)} item={item} index={index} />
+                <CartItemRow key={getCartItemKey(item)} item={item} index={index} disabled={cartLocked} />
               ))}
             </div>
           </div>
@@ -307,7 +390,7 @@ export function CartContent({ onClose }: CartContentProps) {
           <div className="bg-white p-4 md:p-6 border-t border-gray-100 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)]">
 
             {/* Khung nhập mã */}
-            {!replacementSourceId && <div className="relative mb-2">
+            {!replacementSourceId && !pendingOrder && <div className="relative mb-2">
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <input
@@ -328,7 +411,7 @@ export function CartContent({ onClose }: CartContentProps) {
                 </div>
                 <button
                   onClick={() => handleApplyPromo()}
-                  disabled={promoLoading}
+                  disabled={promoLoading || cartLocked}
                   className="bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-text font-bold px-5 py-2.5 rounded-xl text-sm transition-colors flex items-center gap-1"
                 >
                   {promoLoading ? <Loader2 size={16} className="animate-spin" /> : 'Áp dụng'}
@@ -370,7 +453,7 @@ export function CartContent({ onClose }: CartContentProps) {
             </div>}
 
             {/* Thông báo kết quả Áp dụng Mã */}
-            {!replacementSourceId && promoMsg && (promoMsg.type === 'error' || appliedPromo) && (
+            {!replacementSourceId && !pendingOrder && promoMsg && (promoMsg.type === 'error' || appliedPromo) && (
               <div
                 className={`mb-4 flex items-center gap-1.5 text-xs font-medium ${promoMsg.type === 'success' ? 'text-green-600' : 'text-red-500'
                   }`}
@@ -418,7 +501,7 @@ export function CartContent({ onClose }: CartContentProps) {
                 {inventoryCheck.data ? cartValidationMessage(inventoryCheck.data) : 'Không đủ nguyên liệu'}
               </p>
             )}
-            {inventoryCheck.isError && (
+            {!hasPendingOrder && inventoryCheck.isError && (
               <p role="alert" className="mb-4 text-sm font-medium text-red-600">Không kiểm tra được nguyên liệu. Vui lòng thử lại.</p>
             )}
 
@@ -432,16 +515,16 @@ export function CartContent({ onClose }: CartContentProps) {
 
             <button
               onClick={handleCheckoutClick}
-              disabled={isLoading || authLoading || (replacementSourceId && !compensation.data)
-                || isOverStock || inventoryCheck.isPending || inventoryCheck.isError
-                || (!!replacementSourceId && replacementDifference < 0)}
+              disabled={isLoading || authLoading || promoLoading || (replacementSourceId && !compensation.data)
+                || (!hasPendingOrder && (isOverStock || inventoryCheck.isPending || inventoryCheck.isError))
+                || (!hasPendingOrder && !!replacementSourceId && replacementDifference < 0)}
               className={`w-full py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-md ${
                 !!replacementSourceId && replacementDifference < 0
                   ? 'bg-amber-100 text-amber-800 border border-amber-300 cursor-not-allowed opacity-90'
                   : 'bg-primary hover:bg-primary-hover disabled:bg-primary/60 disabled:cursor-not-allowed text-white hover:shadow-lg active:scale-95'
               }`}
             >
-              {isLoading ? 'Đang tạo đơn...' : authLoading ? 'Đang kiểm tra...'
+              {isLoading ? 'Đang xử lý...' : hasPendingOrder ? 'Tiếp tục thanh toán đơn đang chờ' : authLoading ? 'Đang kiểm tra...'
                 : replacementSourceId && replacementDifference < 0
                   ? `Chưa đủ tiền ly nước cũ (Thiếu ${(-replacementDifference).toLocaleString('vi-VN')}đ)`
                   : replacementSourceId && replacementDifference === 0 ? 'Xác nhận đơn thay thế' : 'Tiến hành Thanh toán'} <ArrowRight size={20} />
@@ -450,7 +533,7 @@ export function CartContent({ onClose }: CartContentProps) {
         </div>
 
         {/* Cột phải hiển thị danh sách mã ưu đãi trên màn hình lớn. Không hiển thị khi đổi món đền bù. */}
-        {!replacementSourceId && (
+        {!replacementSourceId && !pendingOrder && (
         <div
           className={`hidden md:flex flex-col bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] shrink-0 md:h-[80vh] md:max-h-[800px] ${showDropdown ? 'w-[340px] opacity-100 translate-x-0 ml-6' : 'w-0 opacity-0 -translate-x-10 pointer-events-none ml-0 border-0'
             }`}

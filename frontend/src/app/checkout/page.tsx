@@ -4,7 +4,9 @@ import { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCartStore, useHasCartHydrated } from '@/stores/cart.store';
 import api from '@/lib/api';
-import { getCartLineTotal, toOrderItem, type CartItem } from '@/lib/cart';
+import { getCartLineTotal, getCheckoutSignature, toOrderItem, type CartItem } from '@/lib/cart';
+import { successfulCheckoutPayment, type CheckoutPayment } from '@/lib/checkout';
+import { useAuth } from '@/hooks/useAuth';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { CompensationCheckout } from '@/components/checkout/CompensationCheckout';
 import {
@@ -20,8 +22,10 @@ import {
 import type { AppliedPromo } from '@/lib/voucher';
 // trang thông tin hiển thị để khách quét mã
 type CheckoutStatus = {
+  payments?: CheckoutPayment[];
   status: string;
   total: number;
+  loyaltyPointsEarned: number;
   originalTotal: number;
   discount: number;
   promoCode: string | null;
@@ -36,6 +40,8 @@ type CheckoutStatus = {
 };
 //dữ liệu danh sách các món ăn đã thêm vào giỏ hàng 
 type SavedOrder = {
+  status: string;
+  promoCode: string | null;
   items: Array<{
     productId: string;
     size: string;
@@ -47,9 +53,10 @@ type SavedOrder = {
 };
 
 function CheckoutContent() {
+  const { refetchUser } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { items, clearCart, appliedPromo, replacementSourceId, selectReplacement } = useCartStore();
+  const { items, completeCheckout, appliedPromo, replacementSourceId, selectReplacement } = useCartStore();
   const currentPromo: AppliedPromo | null = appliedPromo;
   const hasHydrated = useHasCartHydrated();
 
@@ -89,6 +96,10 @@ function CheckoutContent() {
   } | null>(null);
 
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+  const receiptOrderId = receiptData?.orderId;
+  useEffect(() => {
+    if (receiptOrderId) void refetchUser();
+  }, [receiptOrderId, refetchUser]);
 
   const orderId = searchParams.get('orderId');
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null);
@@ -105,11 +116,14 @@ function CheckoutContent() {
       return;
     }
     let active = true;
+    let savedItems: CartItem[] | null = null;
     const syncStatus = async () => {
+      if (!savedItems) return;
       try {
         const response = await api.get<CheckoutStatus>(`/checkout/status/${orderId}`);
         if (!active) return;
         setCheckoutStatus(response.data);
+        if (response.data.status === 'CANCELLED') useCartStore.getState().forgetCheckout(orderId);
         serverDeadlineRef.current = new Date(response.data.expiresAt).getTime();
         setTimeLeft(response.data.status === 'CANCELLED'
           ? 0
@@ -117,14 +131,15 @@ function CheckoutContent() {
 
         // Tự động kích hoạt hóa đơn khi cổng thanh toán VietQR báo đơn đã PAID
         if (response.data.status === 'PAID') {
+          const payment = successfulCheckoutPayment(response.data.payments);
           setReceiptData((prev) => {
             if (prev) return prev;
-            const now = new Date();
+            const now = new Date(payment?.createdAt ?? Date.now());
             const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
             return {
               orderId,
               invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
-              paymentId: `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
+              paymentId: payment?.id ?? `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
               paidAt: now.toLocaleString('vi-VN', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -133,16 +148,16 @@ function CheckoutContent() {
                 month: '2-digit',
                 year: 'numeric',
               }),
-              items: orderItems ? [...orderItems] : [...items],
+              items: [...savedItems!],
               subtotal: response.data.originalTotal,
               discount: response.data.discount,
               promoCode: response.data.promoCode,
               finalTotal: response.data.total,
-              pointsEarned: Math.floor(response.data.total / 10000),
-              method: 'EWALLET',
+              pointsEarned: response.data.loyaltyPointsEarned,
+              method: payment?.method ?? 'EWALLET',
             };
           });
-          clearCart();
+          if (orderId) completeCheckout(orderId);
           if (typeof window !== 'undefined') {
             localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
           }
@@ -155,7 +170,7 @@ function CheckoutContent() {
       try {
         const response = await api.get<{ data: SavedOrder }>(`/orders/${orderId}`);
         if (!active) return;
-        setOrderItems(response.data.data.items.map((item) => ({
+        savedItems = response.data.data.items.map((item) => ({
           productId: item.productId,
           name: item.product.name,
           imageUrl: item.product.imageUrl,
@@ -164,7 +179,14 @@ function CheckoutContent() {
           toppings: item.toppings,
           unitPrice: item.lineTotal / item.qty,
           lineTotal: item.lineTotal,
-        })));
+        }));
+        setOrderItems(savedItems);
+        const cart = useCartStore.getState();
+        const signature = getCheckoutSignature(savedItems, response.data.data.promoCode);
+        if (['PENDING', 'PAYMENT_FAILED'].includes(response.data.data.status) && !cart.replacementSourceId &&
+            signature === getCheckoutSignature(cart.items, cart.appliedPromo?.code)) {
+          cart.rememberCheckout(orderId, signature);
+        }
       } catch {
         if (active) setErrorMessage('Không tải được chi tiết đơn hàng. Vui lòng quay lại giỏ hàng.');
       }
@@ -174,8 +196,7 @@ function CheckoutContent() {
         setTimeLeft(Math.max(0, Math.floor((serverDeadlineRef.current - Date.now()) / 1000)));
       }
     };
-    void syncStatus();
-    void loadOrderItems();
+    void loadOrderItems().then(syncStatus);
     const poll = setInterval(syncStatus, 2_000);
     const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(poll); clearInterval(timer); };
@@ -257,6 +278,7 @@ function CheckoutContent() {
       });
       const nextOrder = response.data.data;
       if (!nextOrder?.id) throw new Error('Máy chủ không trả về mã đơn hàng mới.');
+      currentCart.rememberCheckout(nextOrder.id, getCheckoutSignature(currentCart.items, currentCart.appliedPromo?.code));
       const nextRenewCount = renewCount + 1;
       setRenewCount(nextRenewCount);
       localStorage.setItem(CHECKOUT_RENEW_COUNT_KEY, nextRenewCount.toString());
@@ -322,16 +344,17 @@ function CheckoutContent() {
       const response = await api.get<CheckoutStatus>(`/checkout/status/${orderId}`);
       setCheckoutStatus(response.data);
       if (response.data.status === 'PAID') {
+        const payment = successfulCheckoutPayment(response.data.payments);
         setStatusFeedback({
           type: 'success',
           message: 'Hệ thống đã xác nhận thanh toán thành công! Đang xuất hóa đơn...',
         });
-        const now = new Date();
+        const now = new Date(payment?.createdAt ?? Date.now());
         const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
         setReceiptData({
           orderId,
           invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
-          paymentId: `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
+          paymentId: payment?.id ?? `PAY-VIETQR-${orderId.slice(-6).toUpperCase()}`,
           paidAt: now.toLocaleString('vi-VN', {
             hour: '2-digit',
             minute: '2-digit',
@@ -345,10 +368,10 @@ function CheckoutContent() {
           discount: response.data.discount,
           promoCode: response.data.promoCode,
           finalTotal: response.data.total,
-          pointsEarned: Math.floor(response.data.total / 10000),
-          method: 'EWALLET',
+          pointsEarned: response.data.loyaltyPointsEarned,
+          method: payment?.method ?? 'EWALLET',
         });
-        clearCart();
+        if (orderId) completeCheckout(orderId);
         if (typeof window !== 'undefined') {
           localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
         }
@@ -481,7 +504,7 @@ function CheckoutContent() {
       if (typeof window !== 'undefined') {
         localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
       }
-      clearCart();
+      if (orderId) completeCheckout(orderId);
     } catch (err: unknown) {
       let message = 'Có lỗi xảy ra trong quá trình thanh toán đơn hàng. Vui lòng thử lại!';
       if (
@@ -509,6 +532,10 @@ function CheckoutContent() {
   // Nút "Test nhanh" bỏ qua quét QR dành cho dev test các module khác
   const handleQuickTestPay = async () => {
     if (isSubmitting || !orderId) return;
+    if (!checkoutStatus || !orderItems?.length) {
+      setErrorMessage('Đang tải thông tin đơn hàng. Vui lòng thử lại sau.');
+      return;
+    }
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
@@ -531,17 +558,24 @@ function CheckoutContent() {
       );
       const paymentData = paymentRes.data as {
         success?: boolean;
-        payment?: { id: string; createdAt?: string; amount?: number };
+        message?: string;
+        payment?: CheckoutPayment & { amount?: number };
         pointsEarned?: number;
       };
+      const confirmed = (await api.get<{ data: { status: string; loyaltyPointsEarned: number; payments: (CheckoutPayment & { amount: number })[] } }>(`/orders/${orderId}`)).data.data;
+      const paidPayment = successfulCheckoutPayment(confirmed.payments);
+      if (paymentData.success !== true && !paidPayment) {
+        throw new Error(paymentData.message || 'Thanh toán thất bại. Vui lòng thử lại.');
+      }
+      const payment = paidPayment ?? paymentData.payment;
 
-      const now = new Date();
+      const now = new Date(payment?.createdAt ?? Date.now());
       const datePrefix = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
 
       setReceiptData({
         orderId,
         invoiceNo: `BL-${datePrefix}-${orderId.slice(-6).toUpperCase()}`,
-        paymentId: paymentData.payment?.id || `PAY-TEST-${orderId.slice(-6).toUpperCase()}`,
+        paymentId: payment?.id || `PAY-TEST-${orderId.slice(-6).toUpperCase()}`,
         paidAt: now.toLocaleString('vi-VN', {
           hour: '2-digit',
           minute: '2-digit',
@@ -554,15 +588,15 @@ function CheckoutContent() {
         subtotal: checkoutStatus?.originalTotal ?? subtotal,
         discount: checkoutStatus?.discount ?? discountAmount,
         promoCode: checkoutStatus?.promoCode ?? null,
-        finalTotal: paymentData.payment?.amount ?? finalTotal,
-        pointsEarned: paymentData.pointsEarned ?? Math.floor(finalTotal / 10000),
-        method: 'EWALLET',
+        finalTotal: confirmed.payments.find(p => p.id === payment?.id)?.amount ?? paymentData.payment?.amount ?? finalTotal,
+        pointsEarned: confirmed.loyaltyPointsEarned,
+        method: payment?.method ?? 'EWALLET',
       });
 
       if (typeof window !== 'undefined') {
         localStorage.removeItem(CHECKOUT_RENEW_COUNT_KEY);
       }
-      clearCart();
+      if (orderId) completeCheckout(orderId);
     } catch (err: unknown) {
       let message = 'Lỗi thanh toán test nhanh.';
       if (
@@ -612,7 +646,7 @@ function CheckoutContent() {
           data={receiptData}
           onReset={() => {
             setReceiptData(null);
-            clearCart();
+            if (orderId) completeCheckout(orderId);
           }}
         />
       </main>

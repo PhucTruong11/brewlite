@@ -16,7 +16,8 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
     }],
   };
   const prisma = {
-    order: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
+    order: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   const promotions = { applyPromotion: vi.fn() };
@@ -29,6 +30,7 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
     inventory.prepareCart.mockResolvedValue(cart);
     inventory.reserve.mockResolvedValue(undefined);
     prisma.order.create.mockImplementation(async ({ data }) => ({ id: 'o1', ...data }));
+    prisma.order.findFirst.mockResolvedValue(null);
     prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
     rewards.assertVoucherUsable.mockResolvedValue(undefined);
   });
@@ -44,7 +46,24 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
   it('Từ chối tạo đơn khi thiếu nguyên liệu ngay từ bước tiền kiểm định giỏ hàng', async () => {
     inventory.prepareCart.mockResolvedValueOnce({ ...cart, shortages: [{ ingredientName: 'Hạt cà phê' }] });
     await expect(service.create({ items: [item] }, 'u1')).rejects.toThrow('Không đủ nguyên liệu: Hạt cà phê');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(inventory.reserve).not.toHaveBeenCalled();
+  });
+
+  it('bấm thanh toán lần nữa dùng lại đơn đang giữ kho, không kiểm tra/trừ nguyên liệu thêm', async () => {
+    const pending = { id: 'pending-1', promoCode: null, items: [{ ...item, toppings: [] }] };
+    prisma.order.findFirst.mockResolvedValueOnce(pending);
+    expect(await service.create({ items: [item] }, 'u1')).toBe(pending);
+    expect(inventory.prepareCart).not.toHaveBeenCalled();
+    expect(inventory.reserve).not.toHaveBeenCalled();
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it('đổi số lượng khi còn đơn chờ cần hủy đơn cũ trước, không giữ kho chồng lên', async () => {
+    prisma.order.findFirst.mockResolvedValueOnce({ id: 'pending-1', promoCode: null, items: [{ ...item, qty: 1 }] });
+    await expect(service.create({ items: [item] }, 'u1')).rejects.toThrow(ConflictException);
+    expect(inventory.reserve).not.toHaveBeenCalled();
+    expect(prisma.order.create).not.toHaveBeenCalled();
   });
 
   // 3. Quy trình tạo đơn thành công & Giữ nguyên liệu
@@ -87,7 +106,8 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
     rewards.assertVoucherUsable.mockRejectedValueOnce(new BadRequestException('Mã voucher này bạn đã sử dụng rồi'));
     await expect(service.create({ items: [item], promoCode: 'USED_CODE' }, 'u1'))
       .rejects.toThrow('Mã voucher này bạn đã sử dụng rồi');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(inventory.reserve).not.toHaveBeenCalled();
   });
 
   // 7. [RACE CONDITION] Xung đột giữ nguyên liệu trong transaction

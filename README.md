@@ -109,6 +109,10 @@ Nếu DB mới, chạy phần migration/seed ở trên với Compose trước kh
 
 ## Kiểm thử đền bù đơn bị hủy
 
+Khi chạy local, nút **Test nhanh** mô phỏng thanh toán, không cần tài khoản hoặc khóa PayOS. API vẫn xử lý trừ kho và cộng điểm như một giao dịch thành công.
+
+Hai script `node tests/test_race_condition.js` (từ thư mục repo) và `npx tsx scripts/simulate-payos.ts` (từ `backend`) chạy bằng fixture tự dọn trong DB riêng `brewlite_test` trên localhost:5433. DB test cần được tạo và áp migrations trước; các script không ghi đè kho hoặc tạo đơn giả trong DB `brewlite` đang dùng.
+
 Áp migration `20261110000200_order_compensation` và chạy lại API/web đã build. Dùng hai phiên trình duyệt riêng cho khách và admin.
 
 1. Khách đặt một đơn và hoàn tất thanh toán thẻ mô phỏng. Admin vào **Quản trị → Đơn hàng → Cần xử lý**, chọn **Hủy đơn** khi đơn chưa được pha chế.
