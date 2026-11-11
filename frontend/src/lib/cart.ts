@@ -65,3 +65,10 @@ export function toOrderItem(item: CartItem) {
     lineTotal: getCartLineTotal(item),
   };
 }
+
+export function getCheckoutSignature(items: CartItem[], promoCode?: string | null): string {
+  return JSON.stringify([
+    items.map(item => JSON.stringify([getCartItemKey(item), item.quantity])).sort(),
+    promoCode || null,
+  ]);
+}

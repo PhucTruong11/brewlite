@@ -4,26 +4,47 @@ import { PrismaClient } from '@prisma/client';
 import { InventoryService } from '../src/modules/inventory/inventory.service.js';
 import { OrdersService } from '../src/modules/orders/orders.service.js';
 import { CheckoutService } from '../src/modules/checkout/checkout.service.js';
-import { PaymentGatewayService } from '../src/modules/checkout/payment-gateway.service.js';
 import { RewardsService } from '../src/modules/rewards/rewards.service.js';
 import { AdminService } from '../src/modules/admin/admin.service.js';
 
-const dbName = new URL(process.env.DATABASE_URL ?? '').pathname.slice(1);
-if (dbName !== 'brewlite_inventory_test') {
+const database = new URL(process.env.DATABASE_URL ?? 'postgresql://invalid');
+if (database.pathname !== '/brewlite_inventory_test' || !['localhost', '127.0.0.1'].includes(database.hostname)) {
   throw new Error('test:ingredients chỉ được chạy trên DB brewlite_inventory_test');
 }
 
 const prisma = new PrismaClient();
 
+async function cleanupFixtures() {
+  const users = await prisma.user.findMany({
+    where: { email: { endsWith: '@example.test' }, OR: [{ email: { startsWith: 'ingredient-test-' } }, { email: { startsWith: 'ingredient-race-' } }] },
+    select: { id: true },
+  });
+  const userId = { in: users.map(user => user.id) };
+  await prisma.$transaction(async tx => {
+    await tx.pointTransaction.deleteMany({ where: { userId } });
+    await tx.userVoucher.deleteMany({ where: { userId } });
+    await tx.orderCompensation.deleteMany({ where: { originalOrder: { userId } } });
+    await tx.payment.deleteMany({ where: { order: { userId } } });
+    await tx.order.deleteMany({ where: { userId } });
+    await tx.user.deleteMany({ where: { id: userId } });
+  });
+}
+
 async function main() {
+  await cleanupFixtures();
   const inventory = new InventoryService(prisma as never);
   const rewards = new RewardsService(prisma as never);
   const orders = new OrdersService(prisma as never, {} as never, rewards, inventory);
-  const checkout = new CheckoutService(prisma as never, rewards, inventory, new PaymentGatewayService());
+  const checkout = new CheckoutService(prisma as never, rewards, inventory, {
+    charge: async () => ({ success: true, gatewayRef: 'inventory-test' }),
+  } as never);
   const admin = new AdminService(prisma as never, inventory);
   const suffix = randomUUID();
   const user = await prisma.user.create({
     data: { email: `ingredient-test-${suffix}@example.test`, passwordHash: 'test-only' },
+  });
+  const otherUser = await prisma.user.create({
+    data: { email: `ingredient-race-${suffix}@example.test`, passwordHash: 'test-only' },
   });
   const coffee = await prisma.product.findFirstOrThrow({ where: { name: 'Phin Sữa Đá', isAvailable: true } });
   const blackCoffee = await prisma.product.findFirstOrThrow({ where: { name: 'Phin Đen Đá', isAvailable: true } });
@@ -54,13 +75,13 @@ async function main() {
   assert(shortage.shortages.some((entry) => entry.ingredientName === 'Ly size S'));
   const race = await Promise.allSettled([
     orders.create({ items: [singleCup] }, user.id),
-    orders.create({ items: [singleCup] }, user.id),
+    orders.create({ items: [singleCup] }, otherUser.id),
   ]);
   assert.equal(race.filter((result) => result.status === 'fulfilled').length, 1);
   assert.equal(race.filter((result) => result.status === 'rejected').length, 1);
   const raceOrder = race.find((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof orders.create>>> => result.status === 'fulfilled')!;
   await prisma.order.update({ where: { id: raceOrder.value.id }, data: { reservationExpiresAt: new Date(0) } });
-  await checkout.getOrderCheckoutStatus(raceOrder.value.id, user.id);
+  await checkout.getOrderCheckoutStatus(raceOrder.value.id, raceOrder.value.userId!);
   const cupAfterRelease = await prisma.ingredient.findUniqueOrThrow({ where: { code: 'CUP_S' } });
   assert.equal(cupAfterRelease.reserved?.toNumber(), 0);
   assert.equal(cupAfterRelease.onHand?.toNumber(), 1);
@@ -138,4 +159,6 @@ async function main() {
 
 main()
   .catch((error) => { console.error(error); process.exitCode = 1; })
-  .finally(async () => { await prisma.$disconnect(); });
+  .finally(async () => {
+    try { await cleanupFixtures(); } finally { await prisma.$disconnect(); }
+  });

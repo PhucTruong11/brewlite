@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCartStore } from './cart.store';
 import type { CartItem } from '../lib/cart';
 import type { AppliedPromo } from '../lib/voucher';
+import { getCheckoutSignature } from '../lib/cart';
 
 const drink: CartItem = {
   productId: 'drink-1', name: 'Trà sữa', size: 'M', quantity: 1,
@@ -30,7 +31,8 @@ describe('cart store', () => {
     storage = createStorage();
     vi.stubGlobal('window', { localStorage: storage });
     vi.stubGlobal('localStorage', storage);
-    useCartStore.setState({ items: [], currentUserId: null, appliedPromo: null });
+    vi.stubGlobal('sessionStorage', createStorage());
+    useCartStore.setState({ items: [], currentUserId: null, appliedPromo: null, replacementSourceId: null, pendingCheckout: null, hasHydrated: false });
   });
 
   afterEach(() => {
@@ -114,5 +116,67 @@ describe('cart store', () => {
     expect(storage.getItem('brewlite_cart_guest')).toBeNull();
     expect(storage.getItem('brewlite_cart_guest_promo')).toBeNull();
     expect(JSON.parse(storage.getItem('brewlite_cart_user_u1_promo')!)).toMatchObject({ code: 'GIAM10K' });
+  });
+
+  it('refresh giữ nguyên 12 ly, topping, voucher và đơn đang chờ theo đúng tài khoản', () => {
+    const cart = useCartStore.getState();
+    cart.initUserCart('u1');
+    cart.addItem({ ...drink, quantity: 12, toppings: [{ name: 'Trân châu', quantity: 2 }] });
+    cart.applyPromo(voucher);
+    cart.rememberCheckout('order-1', getCheckoutSignature(useCartStore.getState().items, voucher.code));
+    useCartStore.setState({ items: [], pendingCheckout: null, appliedPromo: null, hasHydrated: false });
+    cart.initUserCart('u1');
+    expect(useCartStore.getState().hasHydrated).toBe(true);
+    expect(useCartStore.getState().items[0]).toMatchObject({ quantity: 12, toppings: [{ name: 'Trân châu', quantity: 2 }] });
+    expect(useCartStore.getState().pendingCheckout?.orderId).toBe('order-1');
+    expect(useCartStore.getState().appliedPromo?.code).toBe(voucher.code);
+    cart.initUserCart('u2');
+    expect(useCartStore.getState().pendingCheckout).toBeNull();
+    expect(useCartStore.getState().items).toEqual([]);
+  });
+
+  it('hủy đơn chờ vẫn giữ số lượng và voucher; chỉ thanh toán đúng giỏ mới xóa', () => {
+    const cart = useCartStore.getState();
+    cart.initUserCart('u1');
+    cart.addItem({ ...drink, quantity: 3 });
+    cart.applyPromo(voucher);
+    const signature = getCheckoutSignature(useCartStore.getState().items, voucher.code);
+    cart.rememberCheckout('cancelled', signature);
+    cart.forgetCheckout('cancelled');
+    expect(useCartStore.getState().totalItems()).toBe(3);
+    expect(useCartStore.getState().appliedPromo?.code).toBe(voucher.code);
+    cart.rememberCheckout('paid', signature);
+    cart.completeCheckout('paid');
+    expect(useCartStore.getState().items).toEqual([]);
+    cart.addItem(drink);
+    cart.completeCheckout('paid');
+    expect(useCartStore.getState().totalItems()).toBe(1);
+  });
+
+  it('mở lại đơn cũ hoặc thanh toán từ tab khác không xóa nhầm giỏ đã thay đổi', () => {
+    const cart = useCartStore.getState();
+    cart.initUserCart('u1');
+    cart.addItem(drink);
+    cart.rememberCheckout('order-1', getCheckoutSignature(useCartStore.getState().items));
+    cart.updateQuantity(0, 4);
+    cart.completeCheckout('another-order');
+    expect(useCartStore.getState().pendingCheckout?.orderId).toBe('order-1');
+    cart.completeCheckout('order-1');
+    expect(useCartStore.getState().totalItems()).toBe(4);
+    expect(useCartStore.getState().pendingCheckout).toBeNull();
+  });
+
+  it('giỏ đền bù tách riêng, hoàn tất đơn thường không xóa món thay thế đang chọn', () => {
+    const cart = useCartStore.getState();
+    cart.initUserCart('u1');
+    cart.addItem(drink);
+    cart.rememberCheckout('normal-order', getCheckoutSignature(useCartStore.getState().items));
+    cart.selectReplacement('source-order');
+    cart.addItem({ ...drink, quantity: 2 });
+    cart.completeCheckout('normal-order');
+    expect(useCartStore.getState().replacementSourceId).toBe('source-order');
+    expect(useCartStore.getState().totalItems()).toBe(2);
+    cart.initUserCart('u1');
+    expect(useCartStore.getState().totalItems()).toBe(2);
   });
 });

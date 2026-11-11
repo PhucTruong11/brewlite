@@ -6,7 +6,7 @@ import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/clien
 import QRCode from 'qrcode';
 import { InventoryService } from '../inventory/inventory.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { RewardsService, VND_PER_POINT } from '../rewards/rewards.service.js';
+import { RewardsService } from '../rewards/rewards.service.js';
 import { CreateOrderItemDto } from './dto/create-order.dto.js';
 
 const DETAILS = { items: true, compensationSource: true, compensationPayosLink: true } satisfies Prisma.OrderInclude;
@@ -69,6 +69,7 @@ export class OrderCompensationService {
         status: order.status,
         total: order.total,
         amountDue: order.total - compensation.amount,
+        loyaltyPointsEarned: order.loyaltyPointsEarned,
         expiresAt: order.reservationExpiresAt,
         remainingSeconds,
         canPay,
@@ -89,15 +90,8 @@ export class OrderCompensationService {
       if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
       const current = await this.findCurrent(tx, originalOrderId);
       if (current) {
-        if (current.status !== OrderStatus.PENDING) {
-          return { id: current.id, status: current.status, difference: 0 };
-        }
-        await this.inventory.release(tx, current);
-        await this.rewards.restoreVoucher(tx, current.id);
-        await tx.order.update({
-          where: { id: current.id },
-          data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } },
-        });
+        // Quay lại thanh toán tiếp cùng đơn; muốn đổi món phải hủy link cũ trước.
+        return { id: current.id, status: current.status, difference: 0 };
       }
 
       const cart = await this.inventory.prepareCart(items, tx);
@@ -175,8 +169,10 @@ export class OrderCompensationService {
             });
           }
         } catch (err: any) {
-          this.logger.warn(`PayOS create failed, falling back to VietQR format: ${err?.message || err}`);
+          this.logger.warn(`PayOS create failed: ${err?.message || err}`);
+          throw new ConflictException('Chưa tạo được mã PayOS. Vui lòng thử lại, chưa chuyển tiền.');
         }
+        throw new ConflictException('PayOS chưa trả về mã thanh toán hợp lệ. Vui lòng thử lại.');
       }
 
       const accountNo = '28642481';
@@ -201,15 +197,15 @@ export class OrderCompensationService {
     });
     if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
     const current = await this.findCurrent(this.prisma, originalOrderId);
-    if (current && current.status === OrderStatus.PENDING) {
-      await this.prisma.$transaction(async (tx) => {
-        await this.inventory.release(tx, current);
-        await this.rewards.restoreVoucher(tx, current.id);
-        if (this.payos && current.compensationPayosLink) {
-          await this.payos.paymentRequests.cancel(current.compensationPayosLink.id, 'Hủy đơn thay thế để chọn lại món').catch(() => null);
-        }
+    if (current) {
+      await this.withLockedOrder(current.id, async (tx, order) => {
+        if (order.status === OrderStatus.CANCELLED) return;
+        if (order.status !== OrderStatus.PENDING) throw new ConflictException('Đơn đã được thanh toán hoặc xử lý. Vui lòng xem lịch sử đơn hàng.');
+        await this.cancelRemotePayment(order);
+        await this.inventory.release(tx, order);
+        await this.rewards.restoreVoucher(tx, order.id);
         await tx.order.update({
-          where: { id: current.id },
+          where: { id: order.id },
           data: {
             status: OrderStatus.CANCELLED,
             notifications: { create: { status: OrderStatus.CANCELLED } },
@@ -221,6 +217,7 @@ export class OrderCompensationService {
   }
 
   async payWithCard(originalOrderId: string, userId: string, method: PaymentMethod = PaymentMethod.CARD) {
+    if (method !== PaymentMethod.CARD && method !== PaymentMethod.EWALLET) throw new BadRequestException('Phương thức thanh toán không hợp lệ');
     const compensation = await this.prisma.orderCompensation.findFirst({
       where: { originalOrderId, originalOrder: { userId } },
     });
@@ -233,9 +230,7 @@ export class OrderCompensationService {
       if (order.status !== OrderStatus.PENDING || !order.reservationExpiresAt || order.reservationExpiresAt <= new Date()) {
         throw new ConflictException('Đơn thay thế đã hết hạn hoặc đã được thanh toán');
       }
-      if (this.payos && order.compensationPayosLink) {
-        await this.payos.paymentRequests.cancel(order.compensationPayosLink.id, 'Khách thanh toán qua thẻ ngân hàng').catch(() => null);
-      }
+      await this.cancelRemotePayment(order);
       const difference = order.total - order.compensationSource!.amount;
       await this.complete(tx, order, Math.max(0, difference), method);
       return { id: order.id, status: OrderStatus.PAID };
@@ -278,7 +273,8 @@ export class OrderCompensationService {
   private async expire(id: string) {
     return this.withLockedOrder(id, async (tx, order) => {
       if (order.status !== OrderStatus.PENDING || !order.reservationExpiresAt || order.reservationExpiresAt > new Date()) return;
-      if (order.compensationPayosLink) {
+      const isLocalDemoLink = !this.payos && order.compensationPayosLink?.id === 'QR-' + order.id;
+      if (order.compensationPayosLink && !isLocalDemoLink) {
         const payos = this.payos;
         if (!payos) return;
         const linkId = order.compensationPayosLink.id;
@@ -307,7 +303,12 @@ export class OrderCompensationService {
     return db.order.findFirst({
       where: {
         compensationSourceId: originalOrderId,
-        status: { not: OrderStatus.CANCELLED },
+        // Một đơn đã thanh toán rồi bị quầy hủy có lượt đền bù mới của riêng nó.
+        // Không mở lại quyền lợi của đơn gốc để sử dụng cùng giá trị hai lần.
+        OR: [
+          { status: { not: OrderStatus.CANCELLED } },
+          { compensationIssued: { isNot: null } },
+        ],
       },
       include: { compensationPayosLink: true, items: true },
       orderBy: { createdAt: 'desc' },
@@ -323,9 +324,27 @@ export class OrderCompensationService {
     }, { timeout: 12_000 });
   }
 
+  private async cancelRemotePayment(order: Replacement) {
+    if (!this.payos || !order.compensationPayosLink) return;
+    const linkId = order.compensationPayosLink.id;
+    try {
+      const link = await this.payos.paymentRequests.get(linkId);
+      if (link.id !== linkId || link.amountPaid !== 0 || !['PENDING', 'CANCELLED', 'EXPIRED'].includes(link.status)) {
+        throw new Error('Payment already received or unresolved');
+      }
+      if (link.status === 'PENDING') {
+        const cancelled = await this.payos.paymentRequests.cancel(linkId, 'Khách hủy mã để chọn món hoặc phương thức khác');
+        if (cancelled.id !== linkId || cancelled.status !== 'CANCELLED' || cancelled.amountPaid !== 0) throw new Error('Payment not cancelled');
+      }
+    } catch {
+      throw new ConflictException('Chưa xác nhận hủy mã PayOS. Vui lòng kiểm tra thanh toán và thử lại.');
+    }
+  }
+
   private async complete(tx: Prisma.TransactionClient, order: Replacement, difference: number, method: PaymentMethod = PaymentMethod.EWALLET) {
     await this.inventory.consume(tx, order);
-    const extraPoints = this.rewards.calcPoints(order.total) - this.rewards.calcPoints(order.compensationSource!.amount);
+    // Giá trị đền bù không phải khoản thanh toán mới. Chỉ tiền trả thêm được tích điểm.
+    const extraPoints = this.rewards.calcPoints(difference);
     if (difference > 0) {
       await tx.payment.create({
         data: {
@@ -334,7 +353,7 @@ export class OrderCompensationService {
         },
       });
     }
-    await this.rewards.earnPoints(tx, { id: order.id, userId: order.userId, total: extraPoints * VND_PER_POINT });
+    await this.rewards.earnPoints(tx, { id: order.id, userId: order.userId, total: difference });
     await tx.order.update({
       where: { id: order.id },
       data: {

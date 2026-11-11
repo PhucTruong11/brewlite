@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useRouter } from 'next/navigation';
@@ -27,10 +27,13 @@ type SavedItem = {
 export function CompensationCheckout({ orderId, sourceId }: { orderId: string; sourceId: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const draftSourceId = useCartStore((state) => state.replacementSourceId);
   const selectReplacement = useCartStore((state) => state.selectReplacement);
-  const clearCart = useCartStore((state) => state.clearCart);
+  const clearCart = useCallback(() => {
+    const cart = useCartStore.getState();
+    if (cart.replacementSourceId === sourceId) cart.clearCart();
+  }, [sourceId]);
 
   const [isRecreating, setIsRecreating] = useState(false);
   const [recreateError, setRecreateError] = useState<string | null>(null);
@@ -106,6 +109,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     try {
       await api.post(`/orders/${sourceId}/replacement/card`, { method: 'CARD' });
       clearCart();
+      await refetchUser();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.push('/orders/' + orderId + '?confirmed=1');
     } catch (err: unknown) {
@@ -122,6 +126,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     try {
       await api.post(`/orders/${sourceId}/replacement/card`, { method: 'EWALLET' });
       clearCart();
+      await refetchUser();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.push('/orders/' + orderId + '?confirmed=1');
     } catch (err: unknown) {
@@ -135,8 +140,10 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
   const handleChooseOtherDrinks = async () => {
     try {
       await api.post(`/orders/${sourceId}/replacement/cancel`);
-    } catch {
-      // ignore
+    } catch (err: unknown) {
+      const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
+      setRecreateError(message || 'Chưa hủy được lượt thanh toán. Vui lòng thử lại.');
+      return;
     }
     clearCart();
     selectReplacement(sourceId);
@@ -154,6 +161,9 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
   });
   const replacement = state.data?.replacement;
   const matches = replacement?.id === orderId;
+  useEffect(() => {
+    if (matches && replacement?.status === 'PAID') void refetchUser();
+  }, [matches, replacement?.status, refetchUser]);
   const order = useQuery({
     queryKey: ['replacement-items', user?.id, orderId],
     queryFn: async () => (await api.get<{ data: { items: SavedItem[] } }>('/orders/' + orderId)).data.data,
@@ -226,7 +236,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
   }, [matches, replacement?.status, replacement?.amountDue, orderId, clearCart, router]);
 
   useEffect(() => {
-    if (matches && replacement && replacement.status !== 'PENDING' && draftSourceId === sourceId) clearCart();
+    if (matches && replacement && replacement.status === 'PAID' && draftSourceId === sourceId) clearCart();
   }, [matches, replacement, draftSourceId, sourceId, clearCart]);
 
   const isInitialLoading = state.isPending || order.isPending;
@@ -288,6 +298,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-6 pb-20 lg:px-8">
+      {recreateError && <p role="alert" className="text-sm text-rose-700">{recreateError}</p>}
       {replacement.amountDue > 0 && (
         <CountdownTimer
           timeLeft={replacement.remainingSeconds}
@@ -345,10 +356,11 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
             subtotal={replacement.total}
             compensationAmount={state.data.amount}
             finalTotal={replacement.amountDue}
-            pointsEarned={Math.floor(replacement.total / 10_000) - Math.floor(state.data.amount / 10_000)}
+            pointsEarned={replacement.status === 'PAID' ? replacement.loyaltyPointsEarned : Math.floor(replacement.amountDue / 10_000)}
             isSubmitting={createLink.isPending || isRecreating || isPayingCard}
             isExpired={expired}
             canRenew={expired}
+            durationSeconds={300}
             onRenew={handleRecreateOrder}
             method={method}
             isCheckingStatus={state.isFetching}

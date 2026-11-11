@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { InventoryState, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderItemDto } from '../orders/dto/create-order.dto.js';
@@ -15,6 +15,7 @@ export const RESERVATION_DURATION_MS = 2 * 60 * 1000;
 
 @Injectable()
 export class InventoryService {
+  private readonly logger = new Logger(InventoryService.name);
   constructor(private readonly prisma: PrismaService) {}
 
   async prepareCart(items: CreateOrderItemDto[], db: Database = this.prisma) {
@@ -156,7 +157,7 @@ export class InventoryService {
     }
   }
 
-  private requirementsFromSnapshots(order: OrderWithSnapshots) {
+  private requirementsFromSnapshots(order: Pick<OrderWithSnapshots, 'items'>) {
     const quantities = new Map<string, Prisma.Decimal>();
     for (const item of order.items) {
       if (!Array.isArray(item.recipeSnapshot)) throw new ConflictException('Đơn hàng thiếu bản chụp công thức');
@@ -190,14 +191,39 @@ export class InventoryService {
 
   async release(db: Prisma.TransactionClient, order: OrderWithSnapshots) {
     if (order.inventoryState !== InventoryState.RESERVED) return;
-    for (const [id, quantity] of this.requirementsFromSnapshots(order)) {
-      const result = await db.ingredient.updateMany({
-        where: { id, trackStock: true, reserved: { gte: quantity } },
-        data: { reserved: { decrement: quantity }, version: { increment: 1 } },
+    await db.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id} FOR UPDATE`;
+    const current = await db.order.findUnique({ where: { id: order.id }, include: { items: true } });
+    if (!current || current.inventoryState !== InventoryState.RESERVED) return;
+    const released = new Map(this.requirementsFromSnapshots(current));
+    const ids = [...released.keys()];
+    if (ids.length) {
+      // Khóa cùng thứ tự với reserve/consume. Đơn tạo đồng thời phải đợi ở
+      // nguyên liệu này trước khi ghi đơn, nên tổng từ các snapshot là ổn định.
+      await db.$queryRaw`SELECT "id" FROM "ingredients" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`;
+      const ingredients = await db.ingredient.findMany({ where: { id: { in: ids }, trackStock: true } });
+      const remainingOrders = await db.order.findMany({
+        where: { id: { not: order.id }, inventoryState: InventoryState.RESERVED },
+        select: { items: { select: { recipeSnapshot: true } } },
       });
-      if (result.count === 0) {
-        const untracked = await db.ingredient.findFirst({ where: { id, trackStock: false }, select: { id: true } });
-        if (!untracked) throw new ConflictException('Không thể trả nguyên liệu đã giữ');
+      const remaining = new Map<string, Prisma.Decimal>();
+      for (const other of remainingOrders) {
+        for (const [id, quantity] of this.requirementsFromSnapshots(other)) {
+          if (released.has(id)) remaining.set(id, (remaining.get(id) ?? new Prisma.Decimal(0)).add(quantity));
+        }
+      }
+      for (const ingredient of ingredients.sort((a, b) => a.id.localeCompare(b.id))) {
+        const required = remaining.get(ingredient.id) ?? new Prisma.Decimal(0);
+        if (!ingredient.onHand || required.gt(ingredient.onHand)) {
+          throw new ConflictException(`Tồn kho ${ingredient.name} không đủ cho các đơn khác đang giữ. Vui lòng kiểm tra kho.`);
+        }
+        if (!ingredient.reserved?.eq(required.add(released.get(ingredient.id)!))) {
+          this.logger.warn(`Đối soát bộ đếm giữ nguyên liệu ${ingredient.code} khi hủy đơn ${order.id}`);
+        }
+        // Chỉ ghi phần còn giữ cho các đơn khác; không cộng vào onHand.
+        await db.ingredient.update({
+          where: { id: ingredient.id },
+          data: { reserved: required, version: { increment: 1 } },
+        });
       }
     }
     await db.order.update({ where: { id: order.id }, data: { inventoryState: InventoryState.RELEASED } });

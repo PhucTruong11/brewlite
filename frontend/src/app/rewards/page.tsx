@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import api from '@/lib/api';
 import { RequireAuth } from '@/components/auth/RequireAuth';
+import { useAuth } from '@/hooks/useAuth';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface RewardOption {
   id: string;
@@ -49,6 +51,8 @@ function getErrorMessage(err: unknown, fallback: string): string {
 }
 
 function RewardsContent() {
+  const { refetchUser } = useAuth();
+  const queryClient = useQueryClient();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
@@ -89,6 +93,10 @@ function RewardsContent() {
       const data = res.data?.data ?? res.data;
       setMsg({ type: 'success', text: data.message });
       setReloadKey((k) => k + 1);
+      await Promise.all([
+        refetchUser(),
+        queryClient.invalidateQueries({ queryKey: ['rewards'] }),
+      ]);
     } catch (err) {
       setMsg({ type: 'error', text: getErrorMessage(err, 'Đổi voucher thất bại, vui lòng thử lại') });
     } finally {
@@ -142,6 +150,8 @@ function RewardsContent() {
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-xs text-emerald-100 space-y-1 z-10">
             <p className="font-bold text-white text-sm">💡 Thể lệ tích điểm:</p>
             <p>• Điểm được cộng tự động sau khi thanh toán hóa đơn.</p>
+            <p>• Tính trên tiền thực trả sau giảm giá, làm tròn xuống theo từng lần thanh toán.</p>
+            <p>• Đơn thay thế chỉ tích điểm cho khoản trả thêm; điểm đơn gốc được giữ lại.</p>
             <p>• Voucher đã đổi chỉ dùng được khi mã còn hiệu lực.</p>
             <p>• Mỗi đơn hàng dùng được một voucher.</p>
           </div>
