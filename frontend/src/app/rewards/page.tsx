@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import {
   Gift, Award, Star, ArrowRight, CheckCircle2, Ticket, Loader2, History, AlertCircle,
@@ -8,7 +8,7 @@ import {
 import api from '@/lib/api';
 import { RequireAuth } from '@/components/auth/RequireAuth';
 import { useAuth } from '@/hooks/useAuth';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 interface RewardOption {
   id: string;
@@ -64,34 +64,23 @@ function formatVoucherEndDate(endDate: string): string {
 }
 
 function RewardsContent() {
-  const { refetchUser } = useAuth();
+  const { user, refetchUser } = useAuth();
   const queryClient = useQueryClient();
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [loading, setLoading] = useState(true);
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-    const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get('/rewards')
-      .then((res) => {
-        if (!cancelled) setOverview(res.data?.data ?? res.data);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setMsg({ type: 'error', text: getErrorMessage(err, 'Không tải được dữ liệu điểm thưởng') });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey]);
+  const { data: overview, isPending, error } = useQuery({
+    queryKey: ['rewards', 'overview', user?.id],
+    queryFn: async ({ signal }) => {
+      const { data } = await api.get<Overview | { data: Overview }>('/rewards', { signal });
+      return 'data' in data ? data.data : data;
+    },
+    enabled: !!user,
+    refetchOnWindowFocus: 'always',
+  });
+  const feedback = msg ?? (error
+    ? { type: 'error', text: getErrorMessage(error, 'Không tải được dữ liệu điểm thưởng') }
+    : null);
 
   const handleRedeem = async (reward: RewardOption) => {
     if (!overview || redeemingId) return;
@@ -105,7 +94,6 @@ function RewardsContent() {
       const res = await api.post('/rewards/redeem', { rewardItemId: reward.id });
       const data = res.data?.data ?? res.data;
       setMsg({ type: 'success', text: data.message });
-      setReloadKey((k) => k + 1);
       await Promise.all([
         refetchUser(),
         queryClient.invalidateQueries({ queryKey: ['rewards'] }),
@@ -117,7 +105,7 @@ function RewardsContent() {
     }
   };
 
-  if (loading) {
+  if (isPending) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-500">
         <Loader2 className="animate-spin mr-2" size={20} /> Đang tải...
@@ -172,20 +160,20 @@ function RewardsContent() {
           <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-white/5 rounded-full blur-2xl pointer-events-none" />
         </div>
 
-        {msg && (
+        {feedback && (
           <div
             className={`p-4 rounded-2xl flex items-center gap-2 text-sm font-medium ${
-              msg.type === 'success'
+              feedback.type === 'success'
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                 : 'bg-red-50 text-red-600 border border-red-200'
             }`}
           >
-            {msg.type === 'success' ? (
+            {feedback.type === 'success' ? (
               <CheckCircle2 size={18} className="shrink-0" />
             ) : (
               <AlertCircle size={18} className="shrink-0" />
             )}
-            <span>{msg.text}</span>
+            <span>{feedback.text}</span>
           </div>
         )}
 

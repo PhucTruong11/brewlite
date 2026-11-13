@@ -79,22 +79,31 @@ export class OrdersController {
   }
 
   @Post(':id/replacement/payment')
-  async createReplacementPayment(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
-    return { data: await this.compensation.createPayosLink(id, user.id) };
+  async createReplacementPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: { id: string },
+    @Body('orderId', ParseUUIDPipe) orderId: string,
+  ) {
+    return { data: await this.compensation.createPayosLink(id, user.id, orderId) };
   }
 
   @Post(':id/replacement/cancel')
-  async cancelPendingReplacement(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
-    return { data: await this.compensation.cancelPendingReplacement(id, user.id) };
+  async cancelPendingReplacement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: { id: string },
+    @Body('orderId', ParseUUIDPipe) orderId: string,
+  ) {
+    return { data: await this.compensation.cancelPendingReplacement(id, user.id, orderId) };
   }
 
   @Post(':id/replacement/card')
   async payReplacementWithCard(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: { id: string },
+    @Body('orderId', ParseUUIDPipe) orderId: string,
     @Body('method') method?: PaymentMethod,
   ) {
-    return { data: await this.compensation.payWithCard(id, user.id, method ?? PaymentMethod.CARD) };
+    return { data: await this.compensation.payWithCard(id, user.id, orderId, method ?? PaymentMethod.CARD) };
   }
 
   @Get(':id')

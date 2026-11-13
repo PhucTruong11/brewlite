@@ -46,7 +46,7 @@ export class OrderCompensationService {
     const canPay = order?.status === OrderStatus.PENDING && remainingSeconds > 0;
 
     if (canPay && order && !order.compensationPayosLink) {
-      await this.createPayosLink(originalOrderId, userId).catch(() => null);
+      await this.createPayosLink(originalOrderId, userId, order.id).catch(() => null);
       order = await this.findCurrent(this.prisma, originalOrderId);
     }
 
@@ -113,7 +113,7 @@ export class OrderCompensationService {
     });
 
     if (result.status === OrderStatus.PENDING && result.difference > 0) {
-      await this.createPayosLink(originalOrderId, userId).catch((err) => {
+      await this.createPayosLink(originalOrderId, userId, result.id).catch((err) => {
         this.logger.warn('Chưa tạo trước được link PayOS: ' + err.message);
       });
     }
@@ -121,16 +121,9 @@ export class OrderCompensationService {
     return { id: result.id, status: result.status };
   }
 
-  async createPayosLink(originalOrderId: string, userId: string) {
-    const compensation = await this.prisma.orderCompensation.findFirst({
-      where: { originalOrderId, originalOrder: { userId } },
-    });
-    if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
-    const replacement = await this.findCurrent(this.prisma, originalOrderId);
-    if (!replacement || replacement.status !== OrderStatus.PENDING) {
-      throw new ConflictException('Không có đơn thay thế đang chờ thanh toán');
-    }
-    return this.withLockedOrder(replacement.id, async (tx, order) => {
+  async createPayosLink(originalOrderId: string, userId: string, orderId: string) {
+    return this.withLockedOrder(orderId, async (tx, order) => {
+      this.assertReplacementOwner(order, originalOrderId, userId);
       if (order.status !== OrderStatus.PENDING || !order.reservationExpiresAt || order.reservationExpiresAt <= new Date()) {
         throw new ConflictException('Đơn thay thế đã hết hạn hoặc đã được thanh toán');
       }
@@ -191,42 +184,35 @@ export class OrderCompensationService {
     });
   }
 
-  async cancelPendingReplacement(originalOrderId: string, userId: string) {
-    const compensation = await this.prisma.orderCompensation.findFirst({
-      where: { originalOrderId, originalOrder: { userId } },
-    });
-    if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
-    const current = await this.findCurrent(this.prisma, originalOrderId);
-    if (current) {
-      await this.withLockedOrder(current.id, async (tx, order) => {
-        if (order.status === OrderStatus.CANCELLED) return;
-        if (order.status !== OrderStatus.PENDING) throw new ConflictException('Đơn đã được thanh toán hoặc xử lý. Vui lòng xem lịch sử đơn hàng.');
-        await this.cancelRemotePayment(order);
-        await this.inventory.release(tx, order);
-        await this.rewards.restoreVoucher(tx, order.id);
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            status: OrderStatus.CANCELLED,
-            notifications: { create: { status: OrderStatus.CANCELLED } },
-          },
-        });
+  async cancelPendingReplacement(originalOrderId: string, userId: string, orderId: string) {
+    await this.withLockedOrder(orderId, async (tx, order) => {
+      this.assertReplacementOwner(order, originalOrderId, userId);
+      if (order.status === OrderStatus.CANCELLED) {
+        const current = await this.findCurrent(tx, originalOrderId);
+        if (current && current.id !== order.id) {
+          throw new ConflictException('Lượt thanh toán đã thay đổi. Vui lòng mở lại đơn thay thế.');
+        }
+        return;
+      }
+      if (order.status !== OrderStatus.PENDING) throw new ConflictException('Đơn đã được thanh toán hoặc xử lý. Vui lòng xem lịch sử đơn hàng.');
+      await this.cancelRemotePayment(order);
+      await this.inventory.release(tx, order);
+      await this.rewards.restoreVoucher(tx, order.id);
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.CANCELLED,
+          notifications: { create: { status: OrderStatus.CANCELLED } },
+        },
       });
-    }
+    });
     return { success: true };
   }
 
-  async payWithCard(originalOrderId: string, userId: string, method: PaymentMethod = PaymentMethod.CARD) {
+  async payWithCard(originalOrderId: string, userId: string, orderId: string, method: PaymentMethod = PaymentMethod.CARD) {
     if (method !== PaymentMethod.CARD && method !== PaymentMethod.EWALLET) throw new BadRequestException('Phương thức thanh toán không hợp lệ');
-    const compensation = await this.prisma.orderCompensation.findFirst({
-      where: { originalOrderId, originalOrder: { userId } },
-    });
-    if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
-    const replacement = await this.findCurrent(this.prisma, originalOrderId);
-    if (!replacement || replacement.status !== OrderStatus.PENDING) {
-      throw new ConflictException('Không có đơn thay thế đang chờ thanh toán');
-    }
-    return this.withLockedOrder(replacement.id, async (tx, order) => {
+    return this.withLockedOrder(orderId, async (tx, order) => {
+      this.assertReplacementOwner(order, originalOrderId, userId);
       if (order.status !== OrderStatus.PENDING || !order.reservationExpiresAt || order.reservationExpiresAt <= new Date()) {
         throw new ConflictException('Đơn thay thế đã hết hạn hoặc đã được thanh toán');
       }
@@ -313,6 +299,12 @@ export class OrderCompensationService {
       include: { compensationPayosLink: true, items: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  private assertReplacementOwner(order: Replacement, originalOrderId: string, userId: string) {
+    if (order.compensationSourceId !== originalOrderId || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn thay thế');
+    }
   }
 
   private withLockedOrder<T>(id: string, operation: (tx: Prisma.TransactionClient, order: Replacement) => Promise<T>) {

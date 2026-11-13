@@ -201,10 +201,9 @@ export class AdminService {
                     data: { usedAt: null, usedOrderId: null },
                 });
                 if (order.loyaltyPointsEarned > 0) {
-                    const user = await tx.user.findUnique({
-                        where: { id: order.userId },
-                        select: { loyaltyPoints: true },
-                    });
+                    const [user] = await tx.$queryRaw<{ loyaltyPoints: number }[]>`
+                        SELECT "loyaltyPoints" FROM "users" WHERE "id" = ${order.userId} FOR UPDATE
+                    `;
                     const pointsToRefund = Math.min(order.loyaltyPointsEarned, user?.loyaltyPoints ?? 0);
                     if (pointsToRefund > 0) {
                         const updatedUser = await tx.user.update({
