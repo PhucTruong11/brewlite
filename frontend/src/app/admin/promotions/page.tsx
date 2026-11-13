@@ -451,16 +451,16 @@ export default function AdminPromotionsPage() {
             )}
 
             <div className="mt-3 overflow-x-auto rounded-2xl bg-surface shadow-sm">
-                <table className="w-full min-w-[960px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[1200px] table-fixed text-left text-sm">
                     <colgroup>
-                        <col className="w-[18%]" />
-                        <col className="w-[10%]" />
-                        <col className="w-[12%]" />
-                        <col className="w-[10%]" />
-                        <col className="w-[7%]" />
-                        <col className="w-[12%]" />
-                        <col className="w-[12%]" />
                         <col className="w-[19%]" />
+                        <col className="w-[19%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[8%]" />
+                        <col className="w-[11%]" />
+                        <col className="w-[11%]" />
+                        <col className="w-[10%]" />
                     </colgroup>
                     <thead className="border-b border-primary/10 text-xs uppercase text-text/60">
                         <tr>
@@ -486,7 +486,7 @@ export default function AdminPromotionsPage() {
                                             {p.isRewardOnly ? 'Voucher đổi thưởng' : 'Áp dụng cho tất cả'}
                                         </span>
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap">{formatDiscount(p)}</td>
+                                    <td className="px-2 py-3 leading-snug">{formatDiscount(p)}</td>
                                     <td className="px-2 py-3 whitespace-nowrap">{formatVND(p.minOrderValue)}</td>
                                     <td className="whitespace-nowrap px-2 py-3 text-xs">
                                         {p.isRewardOnly
