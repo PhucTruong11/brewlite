@@ -343,8 +343,6 @@ export class OrderCompensationService {
 
   private async complete(tx: Prisma.TransactionClient, order: Replacement, difference: number, method: PaymentMethod = PaymentMethod.EWALLET) {
     await this.inventory.consume(tx, order);
-    // Giá trị đền bù không phải khoản thanh toán mới. Chỉ tiền trả thêm được tích điểm.
-    const extraPoints = this.rewards.calcPoints(difference);
     if (difference > 0) {
       await tx.payment.create({
         data: {
@@ -353,11 +351,10 @@ export class OrderCompensationService {
         },
       });
     }
-    await this.rewards.earnPoints(tx, { id: order.id, userId: order.userId, total: difference });
     await tx.order.update({
       where: { id: order.id },
       data: {
-        status: OrderStatus.PAID, loyaltyPointsEarned: extraPoints,
+        status: OrderStatus.PAID, loyaltyPointsEarned: 0,
         notifications: { create: { status: OrderStatus.PAID } },
       },
     });

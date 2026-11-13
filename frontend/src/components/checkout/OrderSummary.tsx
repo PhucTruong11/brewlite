@@ -146,7 +146,7 @@ export function OrderSummary({
         )}
 
         <div className="flex justify-between text-emerald-900 pt-1">
-          <span>Tích lũy điểm (10.000đ = 1 điểm):</span>
+          <span>Điểm dự kiến (cộng khi hoàn tất):</span>
           <span className="font-bold">+{pointsEarned} điểm</span>
         </div>
 

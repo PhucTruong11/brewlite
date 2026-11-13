@@ -8,6 +8,7 @@ import { ListOrdersQueryDto } from './dto/list-orders-query.dto.js';
 import { UpdateStockDto } from './dto/update-stock.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CreatePromotionDto } from './dto/create-promotion.dto.js';
+import { UpdatePromotionDto } from './dto/update-promotion.dto.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { CreateIngredientDto, UpdateIngredientDto, RestockIngredientDto, } from './dto/ingredient.dto.js';
 import { SaveRecipeDto } from './dto/save-recipe.dto.js';
@@ -140,6 +141,15 @@ export class AdminController {
     @Patch('promotions/:id/active')
     async togglePromotion(@Param('id', ParseUUIDPipe) id: string) {
         return { data: await this.adminService.togglePromotionActive(id) };
+    }
+
+    // PATCH /api/admin/promotions/:id
+    @Patch('promotions/:id')
+    async updatePromotion(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: UpdatePromotionDto,
+    ) {
+        return { data: await this.adminService.updatePromotion(id, dto) };
     }
 
     // POST /api/admin/promotions

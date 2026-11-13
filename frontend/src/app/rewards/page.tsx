@@ -16,6 +16,9 @@ interface RewardOption {
   description: string | null;
   pointsCost: number;
   code: string;
+  endDate: string | null;
+  redemptionLimit: number | null;
+  remainingCount: number | null;
 }
 interface MyVoucher {
   code: string;
@@ -230,6 +233,16 @@ function RewardsContent() {
                       <Ticket size={14} />
                       <span>Cần {r.pointsCost} điểm</span>
                     </div>
+                    <p className="text-xs text-gray-500">
+                      {r.remainingCount === null
+                        ? 'Số lượng đổi: Không giới hạn'
+                        : `Còn đổi được: ${r.remainingCount}/${r.redemptionLimit}`}
+                    </p>
+                    {r.endDate && (
+                      <p className="text-xs text-gray-500">
+                        Hết hạn: {new Date(r.endDate).toLocaleDateString('vi-VN')}
+                      </p>
+                    )}
                   </div>
 
                   <button

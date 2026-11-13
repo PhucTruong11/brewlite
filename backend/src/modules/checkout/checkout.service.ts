@@ -221,12 +221,12 @@ export class CheckoutService {
     }
 
     const cleanCode = promoCode.trim().toUpperCase();
-    await this.rewardsService.assertVoucherUsable(userId, cleanCode);
+    // Người dùng phải sở hữu mã giảm giá đã đổi bằng điểm.
+    await this.rewardsService.assertVoucherUsable(userId, cleanCode, this.prisma);
 
     const dbPromo = await this.prisma.promotion.findUnique({
       where: { code: cleanCode },
     });
-
     const fallbackRule = VALID_VOUCHERS[cleanCode];
 
     if (!dbPromo && !fallbackRule) {
@@ -409,6 +409,18 @@ export class CheckoutService {
         return { expired: true as const };
       }
 
+      if (lockedOrder.promoCode) {
+        const code = lockedOrder.promoCode.trim().toUpperCase();
+        await tx.$queryRaw`
+          SELECT 1 AS locked FROM (
+            SELECT pg_advisory_xact_lock(
+            hashtext(${`voucher-use:${lockedOrder.userId}:${code}`})
+            )
+          ) AS voucher_lock
+        `;
+        await this.rewardsService.assertVoucherUsable(lockedOrder.userId, code, tx);
+      }
+
       if (!Number.isSafeInteger(lockedOrder.total) || lockedOrder.total < 0) {
         throw new BadRequestException('Số tiền thanh toán không hợp lệ');
       }
@@ -468,14 +480,8 @@ export class CheckoutService {
           data: {
             status: OrderStatus.PAID,
             notifications: { create: { status: OrderStatus.PAID } },
-            loyaltyPointsEarned: pointsEarned,
+            loyaltyPointsEarned: 0,
           },
-        });
-
-        await this.rewardsService.earnPoints(tx, {
-          id: orderId,
-          userId: lockedOrder.userId,
-          total: lockedOrder.total,
         });
 
         await this.rewardsService.consumeVoucher(
@@ -514,7 +520,7 @@ export class CheckoutService {
       payment: transactionResult.payment,
       pointsEarned: transactionResult.pointsEarned,
       message: transactionResult.success
-        ? `Thanh toán thành công! Bạn được cộng ${transactionResult.pointsEarned} điểm thưởng.`
+        ? `Thanh toán thành công! Bạn dự kiến nhận ${transactionResult.pointsEarned} điểm thưởng khi đơn hàng hoàn tất.`
         : 'Thanh toán thất bại. Vui lòng thử lại hoặc chọn phương thức khác.',
     };
   }
@@ -543,7 +549,6 @@ export class CheckoutService {
     if (remainingSeconds === 0 && (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED)) {
       if (await this.cancelExpiredOrder(orderId)) order.status = OrderStatus.CANCELLED;
     }
-
     const originalTotal = order.total + order.discount;
     const cleanOrderId = order.id.replace(/-/g, '').slice(0, 8).toUpperCase();
     let bankName = process.env.SEPAY_BANK_NAME || 'Vietcombank';
@@ -724,7 +729,6 @@ export class CheckoutService {
       if (existingPayment) {
         return { duplicate: true, payment: existingPayment };
       }
-
       // Trừ kho nguyên liệu
       if (matchedOrder.inventoryState === InventoryState.RESERVED) {
         await this.inventory.consume(tx, matchedOrder);
@@ -758,17 +762,9 @@ export class CheckoutService {
         data: {
           status: OrderStatus.PAID,
           notifications: { create: { status: OrderStatus.PAID } },
-          loyaltyPointsEarned: pointsEarned,
+          loyaltyPointsEarned: 0,
         },
       });
-
-      if (pointsEarned > 0 && matchedOrder.userId) {
-        await this.rewardsService.earnPoints(tx, {
-          id: matchedOrder.id,
-          userId: matchedOrder.userId,
-          total: matchedOrder.total,
-        });
-      }
 
       if (matchedOrder.promoCode && matchedOrder.userId) {
         await this.rewardsService.consumeVoucher(
@@ -895,7 +891,6 @@ export class CheckoutService {
           ![InventoryState.RESERVED, InventoryState.LEGACY].includes(lockedOrder.inventoryState as 'RESERVED' | 'LEGACY')) {
         return { requiresReview: true };
       }
-
       // Trừ kho nguyên liệu
       if (lockedOrder.inventoryState === InventoryState.RESERVED) {
         await this.inventory.consume(tx, lockedOrder);
@@ -927,17 +922,9 @@ export class CheckoutService {
         data: {
           status: OrderStatus.PAID,
           notifications: { create: { status: OrderStatus.PAID } },
-          loyaltyPointsEarned: pointsEarned,
+          loyaltyPointsEarned: 0,
         },
       });
-
-      if (pointsEarned > 0 && lockedOrder.userId) {
-        await this.rewardsService.earnPoints(tx, {
-          id: lockedOrder.id,
-          userId: lockedOrder.userId,
-          total: lockedOrder.total,
-        });
-      }
 
       if (lockedOrder.promoCode && lockedOrder.userId) {
         await this.rewardsService.consumeVoucher(

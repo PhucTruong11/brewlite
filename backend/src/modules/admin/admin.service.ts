@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
-import { IngredientUnit, OrderStatus, Prisma, ProductSize, } from '@prisma/client';
+import { IngredientUnit, OrderStatus, PointTransactionType, Prisma, ProductSize, } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { assertTransition } from '../orders/orders-state.js';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto.js';
 import { UpdateStockDto } from './dto/update-stock.dto.js';
-import { CreatePromotionDto } from './dto/create-promotion.dto.js'
+import { CreatePromotionDto } from './dto/create-promotion.dto.js';
+import { UpdatePromotionDto } from './dto/update-promotion.dto.js';
 import { InventoryService } from '../inventory/inventory.service.js';
+import { RewardsService } from '../rewards/rewards.service.js';
 import { CreateIngredientDto, UpdateIngredientDto, RestockIngredientDto, } from './dto/ingredient.dto.js';
 import { SaveRecipeDto } from './dto/save-recipe.dto.js';
 
@@ -37,10 +39,37 @@ function isPackagingCode(code: string): boolean {
     return code.startsWith('CUP_') || code === 'STRAW';
 }
 
+function formatPromotionVnd(value: number): string {
+    return `${Math.floor(value).toLocaleString('vi-VN')}đ`;
+}
+
+function defaultPromotionDescription(input: {
+    discountType: 'PERCENTAGE' | 'FIXED_AMOUNT';
+    discountValue: number;
+    minOrderValue: number;
+    maxDiscount?: number | null;
+}): string {
+    const threshold = input.minOrderValue > 0
+        ? `cho đơn từ ${formatPromotionVnd(input.minOrderValue)} trở lên`
+        : 'cho mọi đơn hàng';
+
+    if (input.discountType === 'PERCENTAGE') {
+        const max = input.maxDiscount == null || input.maxDiscount <= 0
+            ? 'không giới hạn mức giảm'
+            : `tối đa ${formatPromotionVnd(input.maxDiscount)}`;
+        return `Giảm ${input.discountValue}% ${threshold}, ${max}`;
+    }
+
+    return `Giảm ${formatPromotionVnd(input.discountValue)} ${threshold}`;
+}
 
 @Injectable()
 export class AdminService {
-    constructor(private readonly prisma: PrismaService, private readonly inventory: InventoryService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly inventory: InventoryService,
+        private readonly rewards: RewardsService,
+    ) { }
 
     // Danh sách đơn: lọc trạng thái / ngày / tìm kiếm + phân trang
     async listOrders(q: ListOrdersQueryDto) {
@@ -171,6 +200,38 @@ export class AdminService {
                     where: { usedOrderId: id },
                     data: { usedAt: null, usedOrderId: null },
                 });
+                if (order.loyaltyPointsEarned > 0) {
+                    const user = await tx.user.findUnique({
+                        where: { id: order.userId },
+                        select: { loyaltyPoints: true },
+                    });
+                    const pointsToRefund = Math.min(order.loyaltyPointsEarned, user?.loyaltyPoints ?? 0);
+                    if (pointsToRefund > 0) {
+                        const updatedUser = await tx.user.update({
+                            where: { id: order.userId },
+                            data: { loyaltyPoints: { decrement: pointsToRefund } },
+                            select: { loyaltyPoints: true },
+                        });
+                        await tx.pointTransaction.create({
+                            data: {
+                                userId: order.userId,
+                                type: PointTransactionType.REFUND,
+                                points: -pointsToRefund,
+                                balanceAfter: updatedUser.loyaltyPoints,
+                                orderId: order.id,
+                            },
+                        });
+                    }
+                }
+            }
+
+            let pointsEarned: number | undefined;
+            if (next === OrderStatus.COMPLETED && order.loyaltyPointsEarned === 0) {
+                pointsEarned = await this.rewards.earnPoints(tx, {
+                    id: order.id,
+                    userId: order.userId,
+                    total: order.total,
+                });
             }
 
             return tx.order.update({
@@ -178,6 +239,7 @@ export class AdminService {
                 data: {
                     status: next,
                     notifications: { create: { status: next } },
+                    ...(pointsEarned !== undefined && { loyaltyPointsEarned: pointsEarned }),
                     ...(compensationAmount !== undefined && {
                         compensationIssued: { create: { amount: compensationAmount } },
                     }),
@@ -694,25 +756,231 @@ export class AdminService {
             throw new BadRequestException('Mức giảm theo phần trăm không được vượt quá 100%');
         }
 
+        const isRewardOnly = dto.pointsCost !== undefined;
+        if (dto.isRewardOnly === true && !isRewardOnly) {
+            throw new BadRequestException('Voucher đổi thưởng phải có điểm cần đổi');
+        }
+        if (!isRewardOnly && dto.redemptionLimit !== undefined) {
+            throw new BadRequestException('Chỉ voucher đổi thưởng mới có giới hạn số lượng');
+        }
+        let rewardData: {
+            name: string;
+            description: string;
+            pointsCost: number;
+            redemptionLimit: number;
+        } | undefined;
+        if (isRewardOnly) {
+            const pointsCost = dto.pointsCost;
+            if (pointsCost === undefined || !Number.isInteger(pointsCost) || pointsCost <= 0) {
+                throw new BadRequestException('Điểm đổi phải là số nguyên lớn hơn 0');
+            }
+            if (dto.redemptionLimit === undefined || !Number.isInteger(dto.redemptionLimit) || dto.redemptionLimit <= 0) {
+                throw new BadRequestException('Giới hạn số lượng phải là số nguyên lớn hơn 0');
+            }
+            rewardData = {
+                name: formattedCode,
+                description: '',
+                pointsCost,
+                redemptionLimit: dto.redemptionLimit,
+            };
+        }
+
+        const minOrderValue = dto.minOrderValue ?? 0;
+        const description = dto.description?.trim() || defaultPromotionDescription({
+            discountType: dto.discountType,
+            discountValue: dto.discountValue,
+            minOrderValue,
+            maxDiscount: dto.discountType === 'PERCENTAGE' ? dto.maxDiscount : null,
+        });
+        if (rewardData) {
+            rewardData.name = description || formattedCode;
+            rewardData.description = description;
+        }
+
         return this.prisma.promotion.create({
             data: {
                 code: formattedCode,
-                description: dto.description?.trim() || null,
+                description,
                 discountType: dto.discountType,
                 discountValue: dto.discountValue,
-                minOrderValue: dto.minOrderValue ?? 0,
+                minOrderValue,
                 maxDiscount: dto.discountType === 'PERCENTAGE' ? (dto.maxDiscount ?? null) : null,
                 startDate: new Date(),
                 endDate,
                 isActive: dto.isActive ?? true,
+                isRewardOnly,
+                ...(rewardData ? { rewardItems: { create: rewardData } } : {}),
             },
         });
     }
 
     // Danh sách toàn bộ voucher cho Admin (kể cả mã đã tắt / đã hết hạn)
     async listPromotions() {
-        return this.prisma.promotion.findMany({
-            orderBy: { createdAt: 'desc' },
+        const [promotions, rewardItems, issuedVouchers, appliedRewardVouchers, paidOrdersWithPromotions] =
+            await Promise.all([
+                this.prisma.promotion.findMany({ orderBy: { createdAt: 'desc' } }),
+                this.prisma.rewardItem.findMany({
+                    select: { promotionId: true, pointsCost: true, redemptionLimit: true },
+                }),
+                this.prisma.userVoucher.groupBy({
+                    by: ['promotionId'],
+                    _count: { _all: true },
+                }),
+                this.prisma.userVoucher.groupBy({
+                    by: ['promotionId'],
+                    where: { usedAt: { not: null } },
+                    _count: { _all: true },
+                }),
+                this.prisma.order.findMany({
+                    where: {
+                        promoCode: { not: null },
+                        payments: { some: { status: 'SUCCESS' } },
+                    },
+                    select: { promoCode: true },
+                }),
+            ]);
+
+        const rewardsByPromotion = new Map(rewardItems.map((item) => [item.promotionId, item]));
+        const issuedByPromotion = new Map(
+            issuedVouchers.map((item) => [item.promotionId, item._count._all]),
+        );
+        const appliedRewardsByPromotion = new Map(
+            appliedRewardVouchers.map((item) => [item.promotionId, item._count._all]),
+        );
+        const appliedSharedVouchers = new Map<string, number>();
+        for (const order of paidOrdersWithPromotions) {
+            if (!order.promoCode) continue;
+            const code = order.promoCode.trim().toUpperCase();
+            appliedSharedVouchers.set(code, (appliedSharedVouchers.get(code) ?? 0) + 1);
+        }
+
+        return promotions.map((promotion) => {
+            const rewardItem = rewardsByPromotion.get(promotion.id);
+            const redeemedCount = issuedByPromotion.get(promotion.id) ?? 0;
+            const redemptionLimit = rewardItem?.redemptionLimit ?? null;
+
+            return {
+                ...promotion,
+                pointsCost: rewardItem?.pointsCost ?? null,
+                redemptionLimit,
+                redeemedCount,
+                remainingCount: redemptionLimit === null
+                    ? null
+                    : Math.max(0, redemptionLimit - redeemedCount),
+                appliedCount: promotion.isRewardOnly
+                    ? appliedRewardsByPromotion.get(promotion.id) ?? 0
+                    : appliedSharedVouchers.get(promotion.code.trim().toUpperCase()) ?? 0,
+            };
+        });
+    }
+
+    async updatePromotion(id: string, dto: UpdatePromotionDto) {
+        const endDate = dto.endDate === undefined
+            ? undefined
+            : dto.endDate === null
+                ? null
+                : new Date(/^\d{4}-\d{2}-\d{2}$/.test(dto.endDate)
+                    ? `${dto.endDate}T23:59:59+07:00`
+                    : dto.endDate);
+        if (endDate && (Number.isNaN(endDate.getTime()) || endDate.getTime() <= Date.now())) {
+            throw new BadRequestException('Hạn dùng voucher phải ở trong tương lai theo giờ Việt Nam');
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT "id" FROM "promotions" WHERE "id" = ${id} FOR UPDATE`;
+            const promotion = await tx.promotion.findUnique({
+                where: { id },
+                include: { rewardItems: { select: { id: true, pointsCost: true, redemptionLimit: true } } },
+            });
+            if (!promotion) throw new NotFoundException(`Không tìm thấy voucher ${id}`);
+
+            const rewardItem = promotion.rewardItems[0];
+            const [issuedCount, appliedSharedOrders, appliedRewardVouchers] = await Promise.all([
+                promotion.isRewardOnly
+                    ? tx.userVoucher.count({ where: { promotionId: id } })
+                    : Promise.resolve(0),
+                promotion.isRewardOnly
+                    ? Promise.resolve([])
+                    : tx.order.findMany({
+                        where: {
+                            payments: { some: { status: 'SUCCESS' } },
+                            promoCode: { not: null },
+                        },
+                        select: { promoCode: true },
+                    }),
+                promotion.isRewardOnly
+                    ? tx.userVoucher.count({ where: { promotionId: id, usedAt: { not: null } } })
+                    : Promise.resolve(0),
+            ]);
+            const appliedCount = promotion.isRewardOnly
+                ? appliedRewardVouchers
+                : appliedSharedOrders.filter(
+                    (order) => order.promoCode?.trim().toUpperCase() === promotion.code.trim().toUpperCase(),
+                ).length;
+            const hasUsage = issuedCount > 0 || appliedCount > 0;
+            const changesEntitlement = dto.discountType !== undefined
+                || dto.discountValue !== undefined
+                || dto.minOrderValue !== undefined
+                || dto.maxDiscount !== undefined
+                || dto.endDate !== undefined;
+            if (hasUsage && changesEntitlement) {
+                throw new BadRequestException(
+                    'Không thể sửa quyền lợi hoặc hạn dùng sau khi voucher đã được phát hành/sử dụng',
+                );
+            }
+
+            if (!promotion.isRewardOnly && (dto.pointsCost !== undefined || dto.redemptionLimit !== undefined)) {
+                throw new BadRequestException('Chỉ voucher đổi thưởng mới có điểm và giới hạn số lượng');
+            }
+            if (promotion.isRewardOnly && !rewardItem) {
+                throw new BadRequestException('Voucher đổi thưởng chưa có cấu hình quà');
+            }
+            if (dto.redemptionLimit !== undefined && dto.redemptionLimit < issuedCount) {
+                throw new BadRequestException(
+                    `Giới hạn số lượng không được thấp hơn số voucher đã phát hành (${issuedCount})`,
+                );
+            }
+
+            const nextDiscountType = dto.discountType ?? promotion.discountType;
+            const nextDiscountValue = dto.discountValue ?? promotion.discountValue;
+            if (nextDiscountType === 'PERCENTAGE' && nextDiscountValue > 100) {
+                throw new BadRequestException('Mức giảm theo phần trăm không được vượt quá 100%');
+            }
+
+            const updateData: Prisma.PromotionUpdateInput = {};
+            const rewardItemUpdateData: Prisma.RewardItemUpdateManyMutationInput = {};
+            if (dto.description !== undefined) {
+                const description = dto.description?.trim() || null;
+                updateData.description = description;
+                if (promotion.isRewardOnly) {
+                    rewardItemUpdateData.name = description || promotion.code;
+                    rewardItemUpdateData.description = description;
+                }
+            }
+            if (dto.discountType !== undefined) updateData.discountType = dto.discountType;
+            if (dto.discountValue !== undefined) updateData.discountValue = dto.discountValue;
+            if (dto.minOrderValue !== undefined) updateData.minOrderValue = dto.minOrderValue;
+            if (dto.maxDiscount !== undefined) {
+                updateData.maxDiscount = nextDiscountType === 'PERCENTAGE' ? dto.maxDiscount : null;
+            } else if (dto.discountType === 'FIXED_AMOUNT') {
+                updateData.maxDiscount = null;
+            }
+            if (endDate !== undefined) updateData.endDate = endDate;
+            if (dto.isActive !== undefined) updateData.isActive = dto.isActive;
+            if (promotion.isRewardOnly && (dto.pointsCost !== undefined || dto.redemptionLimit !== undefined)) {
+                if (dto.pointsCost !== undefined) rewardItemUpdateData.pointsCost = dto.pointsCost;
+                if (dto.redemptionLimit !== undefined) {
+                    rewardItemUpdateData.redemptionLimit = dto.redemptionLimit;
+                }
+            }
+            if (promotion.isRewardOnly && Object.keys(rewardItemUpdateData).length > 0) {
+                updateData.rewardItems = {
+                    updateMany: { where: { id: rewardItem!.id }, data: rewardItemUpdateData },
+                };
+            }
+
+            if (Object.keys(updateData).length === 0) return promotion;
+            return tx.promotion.update({ where: { id }, data: updateData });
         });
     }
 

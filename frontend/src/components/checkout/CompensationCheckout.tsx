@@ -356,7 +356,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
             subtotal={replacement.total}
             compensationAmount={state.data.amount}
             finalTotal={replacement.amountDue}
-            pointsEarned={replacement.status === 'PAID' ? replacement.loyaltyPointsEarned : Math.floor(replacement.amountDue / 10_000)}
+            pointsEarned={Math.floor(replacement.amountDue / 10_000)}
             isSubmitting={createLink.isPending || isRecreating || isPayingCard}
             isExpired={expired}
             canRenew={expired}

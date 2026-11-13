@@ -153,7 +153,7 @@ function CheckoutContent() {
               discount: response.data.discount,
               promoCode: response.data.promoCode,
               finalTotal: response.data.total,
-              pointsEarned: response.data.loyaltyPointsEarned,
+              pointsEarned: Math.floor(response.data.total / 10_000),
               method: payment?.method ?? 'EWALLET',
             };
           });
@@ -368,7 +368,7 @@ function CheckoutContent() {
           discount: response.data.discount,
           promoCode: response.data.promoCode,
           finalTotal: response.data.total,
-          pointsEarned: response.data.loyaltyPointsEarned,
+          pointsEarned: Math.floor(response.data.total / 10_000),
           method: payment?.method ?? 'EWALLET',
         });
         if (orderId) completeCheckout(orderId);
@@ -496,7 +496,7 @@ function CheckoutContent() {
         discount: discountAmount,
         promoCode: confirmedOrder?.promoCode || checkoutStatus.promoCode,
         finalTotal: paymentData.payment?.amount ?? finalTotal,
-        pointsEarned: paymentData.pointsEarned ?? (confirmedOrder?.loyaltyPointsEarned ?? pointsEarned),
+        pointsEarned: paymentData.pointsEarned ?? pointsEarned,
         method,
       });
 
@@ -589,7 +589,7 @@ function CheckoutContent() {
         discount: checkoutStatus?.discount ?? discountAmount,
         promoCode: checkoutStatus?.promoCode ?? null,
         finalTotal: confirmed.payments.find(p => p.id === payment?.id)?.amount ?? paymentData.payment?.amount ?? finalTotal,
-        pointsEarned: confirmed.loyaltyPointsEarned,
+        pointsEarned: paymentData.pointsEarned ?? Math.floor(finalTotal / 10_000),
         method: payment?.method ?? 'EWALLET',
       });
 
