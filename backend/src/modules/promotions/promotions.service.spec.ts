@@ -34,6 +34,16 @@ describe('PromotionsService', () => {
       .rejects.toThrow(NotFoundException);
   });
 
+  it('coi mã bị admin tắt là không tồn tại', async () => {
+    prisma.promotion.findUnique.mockResolvedValue({
+      code: 'OFF', isActive: false,
+      startDate: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: null,
+    });
+    await expect(service.applyPromotion({ code: 'OFF', subtotal: 50000 }))
+      .rejects.toThrow(NotFoundException);
+  });
+
   it('cho phép mã còn hạn và tính giảm giá', async () => {
     prisma.promotion.findUnique.mockResolvedValue({
       code: 'LIVE', isActive: true,

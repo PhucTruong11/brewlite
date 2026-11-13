@@ -95,7 +95,10 @@ describe('OrdersService - Quản lý và Tạo đơn hàng (Task 6)', () => {
   it('Áp dụng mã giảm giá và tính toán lại số tiền từ giá gốc trên server (Zero-trust)', async () => {
     promotions.applyPromotion.mockResolvedValue({ discountAmount: 10_000 });
     await service.create({ items: [item], promoCode: 'BREW10' }, 'u1');
-    expect(promotions.applyPromotion).toHaveBeenCalledWith({ code: 'BREW10', subtotal: 78_000 });
+    expect(promotions.applyPromotion).toHaveBeenCalledWith(
+      { code: 'BREW10', subtotal: 78_000 },
+      prisma,
+    );
     expect(prisma.order.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ total: 68_000, discount: 10_000, promoCode: 'BREW10' }),
     }));

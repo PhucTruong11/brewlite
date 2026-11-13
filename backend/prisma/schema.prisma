@@ -326,13 +326,14 @@ model PasswordReset {
 
 /// Danh mục quà đổi điểm; mỗi quà gắn với một mã ưu đãi chỉ dùng sau khi đổi điểm.
 model RewardItem {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  pointsCost  Int
-  promotionId String
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  pointsCost      Int
+  redemptionLimit Int?
+  promotionId     String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
 
   promotion    Promotion     @relation(fields: [promotionId], references: [id])
   userVouchers UserVoucher[]
@@ -356,8 +357,10 @@ model UserVoucher {
   usedOrder  Order?     @relation(fields: [usedOrderId], references: [id])
 
   @@index([userId, promotionId, usedAt])
+  @@index([promotionId, usedAt])
   @@map("user_vouchers")
 }
+
 
 /// Lịch sử cộng và trừ điểm. Ràng buộc duy nhất theo đơn và loại giao dịch ngăn cộng điểm hai lần.
 model PointTransaction {

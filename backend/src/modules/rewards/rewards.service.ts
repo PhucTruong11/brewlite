@@ -33,7 +33,10 @@ export class RewardsService {
       }),
       this.prisma.rewardItem.findMany({
         where: { isActive: true, promotion: { is: usablePromotion } },
-        include: { promotion: true },
+        include: {
+          promotion: true,
+          _count: { select: { userVouchers: true } },
+        },
         orderBy: { pointsCost: 'asc' },
       }),
       this.prisma.userVoucher.findMany({
@@ -83,7 +86,12 @@ export class RewardsService {
         description: r.description,
         pointsCost: r.pointsCost,
         code: r.promotion.code,
-      })),
+        endDate: r.promotion.endDate,
+        redemptionLimit: r.redemptionLimit,
+        remainingCount: r.redemptionLimit === null
+          ? null
+          : Math.max(0, r.redemptionLimit - r._count.userVouchers),
+      })).filter((reward) => reward.remainingCount === null || reward.remainingCount > 0),
       vouchers: [...grouped.values()],
       history,
     };
@@ -92,16 +100,30 @@ export class RewardsService {
   // ---------------- POST /rewards/redeem ----------------
   // Trừ điểm + tạo voucher + ghi lịch sử trong CÙNG 1 transaction
   async redeem(userId: string, rewardItemId: string) {
-    const reward = await this.prisma.rewardItem.findFirst({
-      where: { id: rewardItemId, isActive: true },
-      include: { promotion: true },
-    });
-    if (!reward || !reward.promotion.isActive || reward.promotion.startDate > new Date() ||
-        (reward.promotion.endDate && reward.promotion.endDate <= new Date())) {
-      throw new NotFoundException('Phần quà không tồn tại, chưa có hiệu lực hoặc đã hết hạn');
-    }
-
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT promotion."id"
+        FROM "promotions" AS promotion
+        JOIN "reward_items" AS reward ON reward."promotionId" = promotion."id"
+        WHERE reward."id" = ${rewardItemId}
+        FOR UPDATE OF promotion
+      `;
+      const reward = await tx.rewardItem.findFirst({
+        where: { id: rewardItemId, isActive: true },
+        include: { promotion: true },
+      });
+      if (!reward || !reward.promotion.isActive || reward.promotion.startDate > new Date() ||
+          (reward.promotion.endDate && reward.promotion.endDate <= new Date())) {
+        throw new NotFoundException('Phần quà không tồn tại, chưa có hiệu lực hoặc đã hết hạn');
+      }
+
+      const issuedCount = await tx.userVoucher.count({
+        where: { promotionId: reward.promotionId },
+      });
+      if (reward.redemptionLimit !== null && issuedCount >= reward.redemptionLimit) {
+        throw new BadRequestException('Voucher đổi thưởng đã hết số lượng');
+      }
+
       // Trừ điểm nguyên tử: chỉ thành công nếu còn đủ điểm (chống âm điểm khi bấm/đổi đồng thời)
       const deducted = await tx.user.updateMany({
         where: { id: userId, loyaltyPoints: { gte: reward.pointsCost } },
@@ -165,15 +187,29 @@ export class RewardsService {
     return points;
   }
 
-  // ---------------- Kiểm tra quyền dùng voucher (gọi lúc tạo đơn / áp mã) ----------------
-  // Mã thường: bỏ qua. Mã reward-only: user phải có ít nhất 1 voucher chưa dùng.
-  async assertVoucherUsable(userId: string, code: string): Promise<void> {
-    const promo = await this.prisma.promotion.findUnique({
+  // ---------------- Kiểm tra quyền dùng voucher (gọi lúc tạo đơn / thanh toán) ----------------
+  // Voucher đổi thưởng chỉ dùng được nếu tài khoản còn voucher chưa sử dụng.
+  async assertVoucherUsable(
+    userId: string,
+    code: string,
+    client: Pick<Prisma.TransactionClient, 'promotion' | 'userVoucher'> = this.prisma,
+  ): Promise<void> {
+    const promo = await client.promotion.findUnique({
       where: { code: code.trim().toUpperCase() },
     });
-    if (!promo || !promo.isRewardOnly) return;
+    const now = new Date();
+    if (
+      !promo ||
+      !promo.isActive ||
+      promo.startDate > now ||
+      (promo.endDate && promo.endDate <= now)
+    ) {
+      throw new NotFoundException('Mã giảm giá không tồn tại hoặc đã hết hạn');
+    }
 
-    const available = await this.prisma.userVoucher.count({
+    if (!promo.isRewardOnly) return;
+
+    const available = await client.userVoucher.count({
       where: { userId, promotionId: promo.id, usedAt: null },
     });
     if (available === 0) {
@@ -181,6 +217,21 @@ export class RewardsService {
         'Bạn chưa sở hữu voucher này. Hãy đổi điểm tại trang Tích điểm để nhận mã.',
       );
     }
+  }
+
+  async isPromotionActive(
+    code: string,
+    client: Pick<Prisma.TransactionClient, 'promotion'> = this.prisma,
+  ): Promise<boolean> {
+    const promo = await client.promotion.findUnique({
+      where: { code: code.trim().toUpperCase() },
+      select: { isActive: true, startDate: true, endDate: true },
+    });
+    const now = new Date();
+    return !!promo &&
+      promo.isActive &&
+      promo.startDate <= now &&
+      (!promo.endDate || promo.endDate > now);
   }
 
   // ---------------- Đánh dấu voucher đã dùng (gọi trong transaction thanh toán thành công) ----------------
@@ -195,7 +246,13 @@ export class RewardsService {
     const promo = await tx.promotion.findUnique({
       where: { code: promoCode.trim().toUpperCase() },
     });
-    if (!promo || !promo.isRewardOnly) return;
+    if (!promo) return;
+    const now = new Date();
+    if (!promo.isActive || promo.startDate > now || (promo.endDate && promo.endDate <= now)) {
+      throw new NotFoundException('Mã giảm giá không tồn tại hoặc đã hết hạn');
+    }
+
+    if (!promo.isRewardOnly) return;
 
     // Dùng voucher đổi sớm nhất trước (FIFO)
     const voucher = await tx.userVoucher.findFirst({

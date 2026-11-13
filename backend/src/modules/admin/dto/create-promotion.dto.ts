@@ -1,4 +1,16 @@
-import { IsBoolean, IsDateString, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator'
+import {
+    IsBoolean,
+    IsDateString,
+    IsDefined,
+    IsIn,
+    IsInt,
+    IsNotEmpty,
+    IsNumber,
+    IsOptional,
+    IsString,
+    Min,
+    ValidateIf,
+} from 'class-validator';
 
 export class CreatePromotionDto {
     @IsNotEmpty({ message: 'Mã voucher không được để trống' })
@@ -29,4 +41,17 @@ export class CreatePromotionDto {
     @IsOptional()
     @IsBoolean({ message: 'Trạng thái kích hoạt phải là true hoặc false' })
     isActive?: boolean;
+    @IsOptional()
+    @IsBoolean({ message: 'Loại voucher phải là true hoặc false' })
+    isRewardOnly?: boolean;
+    @ValidateIf((dto: CreatePromotionDto) => dto.pointsCost !== undefined)
+    @IsInt({ message: 'Điểm đổi phải là số nguyên' })
+    @Min(1, { message: 'Điểm đổi phải lớn hơn 0' })
+    pointsCost?: number;
+
+    @ValidateIf((dto: CreatePromotionDto) => dto.pointsCost !== undefined)
+    @IsDefined({ message: 'Voucher đổi thưởng cần giới hạn số lượng' })
+    @IsInt({ message: 'Giới hạn số lượng phải là số nguyên' })
+    @Min(1, { message: 'Giới hạn số lượng phải lớn hơn 0' })
+    redemptionLimit?: number;
 }

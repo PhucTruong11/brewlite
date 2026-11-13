@@ -19,70 +19,6 @@ import { SepayWebhookDto } from './dto/sepay-webhook.dto.js';
 
 export const PAYMENT_TIMEOUT_MS = RESERVATION_DURATION_MS;
 
-export interface VoucherRule {
-  code: string;
-  description: string;
-  discountType: 'FIXED' | 'PERCENT';
-  discountValue: number;
-  minOrderValue: number;
-  maxDiscount?: number;
-}
-
-export const VALID_VOUCHERS: Record<string, VoucherRule> = {
-  WELCOME10: {
-    code: 'WELCOME10',
-    description: 'Giảm 10% cho đơn hàng từ 30k',
-    discountType: 'PERCENT',
-    discountValue: 10,
-    minOrderValue: 30000,
-    maxDiscount: 15000,
-  },
-  COFFEE20K: {
-    code: 'COFFEE20K',
-    description: 'Giảm ngay 20.000đ cho đơn từ 40k',
-    discountType: 'FIXED',
-    discountValue: 20000,
-    minOrderValue: 40000,
-  },
-  BREWLITE50: {
-    code: 'BREWLITE50',
-    description: 'Giảm 50% tối đa 30.000đ',
-    discountType: 'PERCENT',
-    discountValue: 50,
-    minOrderValue: 50000,
-    maxDiscount: 30000,
-  },
-  CHAOBAN: {
-    code: 'CHAOBAN',
-    description: 'Giảm 15.000đ cho đơn từ 40.000đ',
-    discountType: 'FIXED',
-    discountValue: 15000,
-    minOrderValue: 40000,
-  },
-  BREW10: {
-    code: 'BREW10',
-    description: 'Giảm 10% (tối đa 25.000đ) cho mọi đơn',
-    discountType: 'PERCENT',
-    discountValue: 10,
-    minOrderValue: 0,
-    maxDiscount: 25000,
-  },
-  FREESHIP: {
-    code: 'FREESHIP',
-    description: 'Giảm 10.000đ cho đơn từ 30.000đ',
-    discountType: 'FIXED',
-    discountValue: 10000,
-    minOrderValue: 30000,
-  },
-  TRIAN: {
-    code: 'TRIAN',
-    description: 'Tặng 1 ly nước miễn phí (giảm 100%)',
-    discountType: 'PERCENT',
-    discountValue: 100,
-    minOrderValue: 0,
-  },
-};
-
 // Xử lý toàn bộ nghiệp vụ thanh toán.
 @Injectable()
 export class CheckoutService {
@@ -221,29 +157,16 @@ export class CheckoutService {
     }
 
     const cleanCode = promoCode.trim().toUpperCase();
-    await this.rewardsService.assertVoucherUsable(userId, cleanCode);
+    // Người dùng phải sở hữu mã giảm giá đã đổi bằng điểm.
+    await this.rewardsService.assertVoucherUsable(userId, cleanCode, this.prisma);
 
     const dbPromo = await this.prisma.promotion.findUnique({
       where: { code: cleanCode },
     });
-
-    const fallbackRule = VALID_VOUCHERS[cleanCode];
-
-    if (!dbPromo && !fallbackRule) {
-      throw new BadRequestException(
-        `Mã giảm giá "${promoCode}" không tồn tại hoặc đã hết hạn`,
-      );
-    }
-
-    const now = new Date();
-    if (dbPromo && (!dbPromo.isActive || dbPromo.startDate > now || (dbPromo.endDate && dbPromo.endDate <= now))) {
-      throw new BadRequestException(
-        `Mã giảm giá "${promoCode}" chưa có hiệu lực hoặc đã hết hạn`,
-      );
-    }
+    if (!dbPromo) throw new NotFoundException('Mã giảm giá không tồn tại hoặc đã hết hạn');
 
     const baseTotal = order.total + order.discount;
-    const minOrderValue = dbPromo ? dbPromo.minOrderValue : (fallbackRule?.minOrderValue ?? 0);
+    const minOrderValue = dbPromo.minOrderValue;
 
     if (baseTotal < minOrderValue) {
       throw new BadRequestException(
@@ -252,38 +175,33 @@ export class CheckoutService {
     }
 
     let discountAmount = 0;
-    const description = dbPromo?.description || fallbackRule?.description || '';
+    const description = dbPromo.description || '';
 
-    if (dbPromo) {
-      if (dbPromo.discountType === 'PERCENTAGE') {
-        discountAmount = Math.floor((baseTotal * dbPromo.discountValue) / 100);
-        if (dbPromo.maxDiscount && discountAmount > dbPromo.maxDiscount) {
-          discountAmount = dbPromo.maxDiscount;
-        }
-      } else {
-        discountAmount = Math.floor(dbPromo.discountValue);
+    if (dbPromo.discountType === 'PERCENTAGE') {
+      discountAmount = Math.floor((baseTotal * dbPromo.discountValue) / 100);
+      if (dbPromo.maxDiscount && discountAmount > dbPromo.maxDiscount) {
+        discountAmount = dbPromo.maxDiscount;
       }
-    } else if (fallbackRule) {
-      if (fallbackRule.discountType === 'FIXED') {
-        discountAmount = fallbackRule.discountValue;
-      } else {
-        discountAmount = Math.floor((baseTotal * fallbackRule.discountValue) / 100);
-        if (fallbackRule.maxDiscount && discountAmount > fallbackRule.maxDiscount) {
-          discountAmount = fallbackRule.maxDiscount;
-        }
-      }
+    } else {
+      discountAmount = Math.floor(dbPromo.discountValue);
     }
 
     discountAmount = Math.min(discountAmount, baseTotal);
     const finalTotal = Math.max(0, baseTotal - discountAmount);
 
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        promoCode: cleanCode,
-        discount: discountAmount,
-        total: finalTotal,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT "id" FROM "promotions" WHERE "code" = ${cleanCode} FOR UPDATE
+      `;
+      await this.rewardsService.assertVoucherUsable(userId, cleanCode, tx);
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          promoCode: cleanCode,
+          discount: discountAmount,
+          total: finalTotal,
+        },
+      });
     });
 
     return {
@@ -407,6 +325,19 @@ export class CheckoutService {
         await this.rewardsService.restoreVoucher(tx, orderId);
         await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
         return { expired: true as const };
+      }
+
+      if (lockedOrder.promoCode) {
+        const code = lockedOrder.promoCode.trim().toUpperCase();
+        await tx.$queryRaw`
+          SELECT "id" FROM "promotions" WHERE "code" = ${code} FOR UPDATE
+        `;
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`voucher-use:${lockedOrder.userId}:${code}`})
+          )
+        `;
+        await this.rewardsService.assertVoucherUsable(lockedOrder.userId, code, tx);
       }
 
       if (!Number.isSafeInteger(lockedOrder.total) || lockedOrder.total < 0) {
@@ -542,6 +473,13 @@ export class CheckoutService {
 
     if (remainingSeconds === 0 && (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED)) {
       if (await this.cancelExpiredOrder(orderId)) order.status = OrderStatus.CANCELLED;
+    }
+    if (
+      remainingSeconds > 0 &&
+      (order.status === OrderStatus.PENDING || order.status === OrderStatus.PAYMENT_FAILED) &&
+      order.promoCode
+    ) {
+      await this.rewardsService.assertVoucherUsable(userId, order.promoCode);
     }
 
     const originalTotal = order.total + order.discount;
@@ -724,6 +662,15 @@ export class CheckoutService {
       if (existingPayment) {
         return { duplicate: true, payment: existingPayment };
       }
+      if (matchedOrder.promoCode) {
+        const code = matchedOrder.promoCode.trim().toUpperCase();
+        await tx.$queryRaw`
+          SELECT "id" FROM "promotions" WHERE "code" = ${code} FOR UPDATE
+        `;
+        if (!(await this.rewardsService.isPromotionActive(code, tx))) {
+          return { requiresReview: true };
+        }
+      }
 
       // Trừ kho nguyên liệu
       if (matchedOrder.inventoryState === InventoryState.RESERVED) {
@@ -781,6 +728,11 @@ export class CheckoutService {
 
       return { duplicate: false, payment, order: updatedOrder, pointsEarned };
     });
+
+    if ('requiresReview' in transactionResult) {
+      this.logger.error(`[SePay Webhook] Đơn ${matchedOrder.id} cần đối soát vì voucher không còn hiệu lực`);
+      return { success: true, requiresReview: true, orderId: matchedOrder.id };
+    }
 
     this.logger.log(`[SePay Webhook] Đơn hàng #${matchedOrder.id} đã thanh toán thành công qua SePay!`);
     return {
@@ -894,6 +846,15 @@ export class CheckoutService {
       if (!lockedOrder || ![OrderStatus.PENDING, OrderStatus.PAYMENT_FAILED].includes(lockedOrder.status as 'PENDING' | 'PAYMENT_FAILED') ||
           ![InventoryState.RESERVED, InventoryState.LEGACY].includes(lockedOrder.inventoryState as 'RESERVED' | 'LEGACY')) {
         return { requiresReview: true };
+      }
+      if (lockedOrder.promoCode) {
+        const code = lockedOrder.promoCode.trim().toUpperCase();
+        await tx.$queryRaw`
+          SELECT "id" FROM "promotions" WHERE "code" = ${code} FOR UPDATE
+        `;
+        if (!(await this.rewardsService.isPromotionActive(code, tx))) {
+          return { requiresReview: true };
+        }
       }
 
       // Trừ kho nguyên liệu
