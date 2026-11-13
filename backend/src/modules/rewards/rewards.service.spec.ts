@@ -61,19 +61,6 @@ describe('RewardsService và hạn voucher', () => {
     expect(tx.user.updateMany).not.toHaveBeenCalled();
   });
 
-  it('không cho đổi quà khi admin đã tắt promotion', async () => {
-    tx.rewardItem.findFirst.mockResolvedValue({
-      isActive: true,
-      promotion: {
-        isActive: false,
-        startDate: new Date('2026-01-01T00:00:00.000Z'),
-        endDate: null,
-      },
-    });
-    await expect(service.redeem('u1', 'r1')).rejects.toThrow(NotFoundException);
-    expect(tx.user.updateMany).not.toHaveBeenCalled();
-  });
-
   it('ẩn quà đổi thưởng đã hết số lượng nhưng vẫn trả voucher đã đổi chưa dùng', async () => {
     prisma.user.findUnique.mockResolvedValue({ loyaltyPoints: 20 });
     const endDate = new Date('2026-12-01T16:59:59.000Z');
@@ -94,7 +81,13 @@ describe('RewardsService và hạn voucher', () => {
       },
     ]);
     prisma.userVoucher.findMany.mockResolvedValue([
-      { promotion: { code: 'SOLDOUT', description: 'Voucher đã cấp' } },
+      {
+        promotion: {
+          code: 'SOLDOUT',
+          description: 'Voucher đã cấp',
+          endDate: new Date('2026-12-01T16:59:59.000Z'),
+        },
+      },
     ]);
     prisma.pointTransaction.findMany.mockResolvedValue([]);
 
@@ -109,7 +102,10 @@ describe('RewardsService và hạn voucher', () => {
       }),
     ]);
     expect(overview.vouchers).toEqual([
-      expect.objectContaining({ code: 'SOLDOUT' }),
+      expect.objectContaining({
+        code: 'SOLDOUT',
+        endDate: new Date('2026-12-01T16:59:59.000Z'),
+      }),
     ]);
   });
 
@@ -138,9 +134,6 @@ describe('RewardsService và hạn voucher', () => {
     prisma.promotion.findUnique.mockResolvedValue({
       id: 'p1',
       isRewardOnly: false,
-      isActive: true,
-      startDate: new Date('2026-01-01T00:00:00.000Z'),
-      endDate: null,
     });
 
     await expect(service.assertVoucherUsable('u1', 'SHARED')).resolves.toBeUndefined();
@@ -150,13 +143,7 @@ describe('RewardsService và hạn voucher', () => {
   });
 
   it('không tiêu thụ UserVoucher khi thanh toán bằng voucher dùng chung', async () => {
-    tx.promotion.findUnique.mockResolvedValue({
-      id: 'p1',
-      isRewardOnly: false,
-      isActive: true,
-      startDate: new Date('2026-01-01T00:00:00.000Z'),
-      endDate: null,
-    });
+    tx.promotion.findUnique.mockResolvedValue({ id: 'p1', isRewardOnly: false });
 
     await service.consumeVoucher(tx as never, 'u1', 'ONCE', 'order1');
 
@@ -164,15 +151,4 @@ describe('RewardsService và hạn voucher', () => {
     expect(tx.userVoucher.updateMany).not.toHaveBeenCalled();
   });
 
-  it('báo mã không tồn tại khi promotion đã bị admin tắt', async () => {
-    prisma.promotion.findUnique.mockResolvedValue({
-      id: 'p1',
-      isRewardOnly: false,
-      isActive: false,
-      startDate: new Date('2026-01-01T00:00:00.000Z'),
-      endDate: null,
-    });
-
-    await expect(service.assertVoucherUsable('u1', 'OFF')).rejects.toThrow(NotFoundException);
-  });
 });

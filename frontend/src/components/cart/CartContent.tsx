@@ -28,6 +28,7 @@ interface Promotion {
   discountValue: number;
   minOrderValue: number;
   maxDiscount?: number | null;
+  endDate?: string | null;
   ownedCount?: number;
 }
 
@@ -39,6 +40,16 @@ interface OwnedVoucher {
   discountValue: number;
   minOrderValue: number;
   maxDiscount: number | null;
+  endDate: string | null;
+}
+
+function formatVoucherEndDate(endDate: string): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date(endDate));
 }
 
 export function CartContent({ onClose }: CartContentProps) {
@@ -444,6 +455,7 @@ export function CartContent({ onClose }: CartContentProps) {
                           </div>
                           {promo.ownedCount && <p className="text-[11px] font-semibold text-primary">Đã đổi điểm · x{promo.ownedCount}</p>}
                           <p className="text-[11px] text-gray-500">Đơn tối thiểu {promo.minOrderValue.toLocaleString()}đ</p>
+                          {promo.endDate && <p className="text-[11px] text-gray-500">Hết hạn: {formatVoucherEndDate(promo.endDate)}</p>}
                         </div>
                       );
                     })
@@ -595,6 +607,11 @@ export function CartContent({ onClose }: CartContentProps) {
 
                       <div className="mt-3 pt-3 border-t border-dashed border-gray-200">
                         <p className="text-xs text-gray-500">Đơn tối thiểu: <span className="font-semibold text-gray-700">{promo.minOrderValue.toLocaleString('vi-VN')}đ</span></p>
+                        {promo.endDate && (
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Hết hạn: <span className="font-semibold text-gray-700">{formatVoucherEndDate(promo.endDate)}</span>
+                          </p>
+                        )}
                         {promo.maxDiscount && (
                           <p className="text-[10px] text-gray-400 mt-0.5">Giảm tối đa {promo.maxDiscount.toLocaleString('vi-VN')}đ</p>
                         )}

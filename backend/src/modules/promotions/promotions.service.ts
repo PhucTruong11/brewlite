@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ApplyPromotionDto } from './dto/apply-promotion.dto.js';
 
@@ -21,17 +20,14 @@ export class PromotionsService {
     });
   }
 
-  async applyPromotion(
-    dto: ApplyPromotionDto,
-    client: Pick<Prisma.TransactionClient, 'promotion'> = this.prisma,
-  ) {
+  async applyPromotion(dto: ApplyPromotionDto) {
     const { code, subtotal } = dto;
 
     if (!code) {
       throw new BadRequestException('Vui lòng nhập mã ưu đãi');
     }
 
-    const promo = await client.promotion.findUnique({
+    const promo = await this.prisma.promotion.findUnique({
       where: { code: code.trim().toUpperCase() },
     });
 

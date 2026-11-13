@@ -451,27 +451,27 @@ export default function AdminPromotionsPage() {
             )}
 
             <div className="mt-3 overflow-x-auto rounded-2xl bg-surface shadow-sm">
-                <table className="w-full min-w-[720px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[960px] table-fixed text-left text-sm">
                     <colgroup>
-                        <col className="w-[200px]" />
-                        <col className="w-[200px]" />
-                        <col className="w-[200px]" />
-                        <col className="w-[130px]" />
-                        <col className="w-[110px]" />
-                        <col className="w-[200px]" />
-                        <col className="w-[200px]" />
-                        <col className="w-[200px]" />
+                        <col className="w-[18%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[19%]" />
                     </colgroup>
                     <thead className="border-b border-primary/10 text-xs uppercase text-text/60">
                         <tr>
-                            <th className="px-4 py-3">Mã</th>
-                            <th className="px-4 py-3">Giảm</th>
-                            <th className="px-4 py-3">Đơn tối thiểu</th>
-                            <th className="px-4 py-3">Số lượng</th>
-                            <th className="px-4 py-3">Đã áp dụng</th>
-                            <th className="px-4 py-3">Hạn dùng</th>
-                            <th className="px-4 py-3">Trạng thái</th>
-                            <th className="px-4 py-3 text-right">Thao tác</th>
+                            <th className="px-2 py-3">Mã</th>
+                            <th className="px-2 py-3">Giảm</th>
+                            <th className="px-2 py-3">Đơn tối thiểu</th>
+                            <th className="px-2 py-3">Số lượng</th>
+                            <th className="px-2 py-3">Đã áp dụng</th>
+                            <th className="px-2 py-3">Hạn dùng</th>
+                            <th className="px-2 py-3">Trạng thái</th>
+                            <th className="px-2 py-3 text-right">Thao tác</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -479,29 +479,29 @@ export default function AdminPromotionsPage() {
                             const expired = isExpired(p);
                             return (
                                 <tr key={p.id} className="border-b border-primary/5 last:border-0">
-                                    <td className="px-4 py-3">
+                                    <td className="px-2 py-3">
                                         <p className="font-bold">{p.code}</p>
                                         {p.description && <p className="text-xs text-text/60">{p.description}</p>}
                                         <span className="text-xs font-semibold text-primary">
                                             {p.isRewardOnly ? 'Voucher đổi thưởng' : 'Áp dụng cho tất cả'}
                                         </span>
                                     </td>
-                                    <td className="px-4 py-3 whitespace-nowrap">{formatDiscount(p)}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap">{formatVND(p.minOrderValue)}</td>
-                                    <td className="whitespace-nowrap px-4 py-3">
+                                    <td className="px-2 py-3 whitespace-nowrap">{formatDiscount(p)}</td>
+                                    <td className="px-2 py-3 whitespace-nowrap">{formatVND(p.minOrderValue)}</td>
+                                    <td className="whitespace-nowrap px-2 py-3 text-xs">
                                         {p.isRewardOnly
                                             ? p.redemptionLimit === null
                                                 ? 'Không giới hạn'
                                                 : `Còn ${p.remainingCount ?? 0}/${p.redemptionLimit}`
                                             : '—'}
                                     </td>
-                                    <td className="whitespace-nowrap px-4 py-3">
+                                    <td className="whitespace-nowrap px-2 py-3 text-xs">
                                         {p.appliedCount}
                                     </td>
-                                    <td className="px-4 py-3 whitespace-nowrap">
+                                    <td className="px-2 py-3 whitespace-nowrap">
                                         {p.endDate ? new Date(p.endDate).toLocaleDateString('vi-VN') : 'Không giới hạn'}
                                     </td>
-                                    <td className="px-4 py-3 whitespace-nowrap">
+                                    <td className="px-2 py-3 whitespace-nowrap">
                                         {expired ? (
                                             <span className="whitespace-nowrap rounded-full bg-gray-200 px-2 py-0.5 text-xs font-semibold">Hết hạn</span>
                                         ) : p.isActive ? (
@@ -510,12 +510,12 @@ export default function AdminPromotionsPage() {
                                             <span className="whitespace-nowrap rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Đã tắt</span>
                                         )}
                                     </td>
-                                    <td className="min-w-[160px] whitespace-nowrap px-4 py-3 text-right">
-                                        <div className="flex items-center justify-end gap-2">
+                                    <td className="whitespace-nowrap px-2 py-3 text-right">
+                                        <div className="flex items-center justify-end gap-1">
                                             <button
                                                 type="button"
                                                 onClick={() => startEditing(p)}
-                                                className="rounded-lg border border-primary/30 px-3 py-1 text-xs font-semibold hover:bg-background"
+                                                className="rounded-lg border border-primary/30 px-2 py-1 text-xs font-semibold hover:bg-background"
                                             >
                                                 Sửa
                                             </button>
@@ -523,7 +523,7 @@ export default function AdminPromotionsPage() {
                                                 type="button"
                                                 disabled={toggleMutation.isPending}
                                                 onClick={() => toggleMutation.mutate(p.id)}
-                                                className="rounded-lg border border-primary/30 px-3 py-1 text-xs font-semibold hover:bg-background disabled:opacity-60"
+                                                className="rounded-lg border border-primary/30 px-2 py-1 text-xs font-semibold hover:bg-background disabled:opacity-60"
                                             >
                                                 {p.isActive ? 'Tắt' : 'Bật'}
                                             </button>

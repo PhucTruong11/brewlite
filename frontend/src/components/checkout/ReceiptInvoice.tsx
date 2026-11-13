@@ -139,7 +139,7 @@ export function ReceiptInvoice({ data, onReset }: ReceiptInvoiceProps) {
             </span>
           </div>
           <div className="flex justify-between items-center pt-2 border-t border-[#006241]/10 text-emerald-900 font-bold">
-            <span>Điểm thưởng tích lũy (10.000đ = 1 điểm):</span>
+            <span>Điểm thưởng dự kiến (cộng khi đơn hoàn tất):</span>
             <span className="text-sm bg-primary text-white px-2 py-0.5 rounded-full">
               +{data.pointsEarned} điểm
             </span>

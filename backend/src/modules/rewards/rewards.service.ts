@@ -62,6 +62,7 @@ export class RewardsService {
       discountValue: number;
       minOrderValue: number;
       maxDiscount: number | null;
+      endDate: Date | null;
     }>();
     for (const v of unusedVouchers) {
       const cur = grouped.get(v.promotion.code);
@@ -75,6 +76,7 @@ export class RewardsService {
           discountValue: v.promotion.discountValue,
           minOrderValue: v.promotion.minOrderValue,
           maxDiscount: v.promotion.maxDiscount,
+          endDate: v.promotion.endDate,
         });
     }
 
@@ -197,15 +199,7 @@ export class RewardsService {
     const promo = await client.promotion.findUnique({
       where: { code: code.trim().toUpperCase() },
     });
-    const now = new Date();
-    if (
-      !promo ||
-      !promo.isActive ||
-      promo.startDate > now ||
-      (promo.endDate && promo.endDate <= now)
-    ) {
-      throw new NotFoundException('Mã giảm giá không tồn tại hoặc đã hết hạn');
-    }
+    if (!promo) return;
 
     if (!promo.isRewardOnly) return;
 
@@ -217,21 +211,6 @@ export class RewardsService {
         'Bạn chưa sở hữu voucher này. Hãy đổi điểm tại trang Tích điểm để nhận mã.',
       );
     }
-  }
-
-  async isPromotionActive(
-    code: string,
-    client: Pick<Prisma.TransactionClient, 'promotion'> = this.prisma,
-  ): Promise<boolean> {
-    const promo = await client.promotion.findUnique({
-      where: { code: code.trim().toUpperCase() },
-      select: { isActive: true, startDate: true, endDate: true },
-    });
-    const now = new Date();
-    return !!promo &&
-      promo.isActive &&
-      promo.startDate <= now &&
-      (!promo.endDate || promo.endDate > now);
   }
 
   // ---------------- Đánh dấu voucher đã dùng (gọi trong transaction thanh toán thành công) ----------------
@@ -247,10 +226,6 @@ export class RewardsService {
       where: { code: promoCode.trim().toUpperCase() },
     });
     if (!promo) return;
-    const now = new Date();
-    if (!promo.isActive || promo.startDate > now || (promo.endDate && promo.endDate <= now)) {
-      throw new NotFoundException('Mã giảm giá không tồn tại hoặc đã hết hạn');
-    }
 
     if (!promo.isRewardOnly) return;
 

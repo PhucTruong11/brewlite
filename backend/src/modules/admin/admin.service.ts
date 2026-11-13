@@ -7,6 +7,7 @@ import { UpdateStockDto } from './dto/update-stock.dto.js';
 import { CreatePromotionDto } from './dto/create-promotion.dto.js';
 import { UpdatePromotionDto } from './dto/update-promotion.dto.js';
 import { InventoryService } from '../inventory/inventory.service.js';
+import { RewardsService } from '../rewards/rewards.service.js';
 import { CreateIngredientDto, UpdateIngredientDto, RestockIngredientDto, } from './dto/ingredient.dto.js';
 import { SaveRecipeDto } from './dto/save-recipe.dto.js';
 
@@ -64,7 +65,11 @@ function defaultPromotionDescription(input: {
 
 @Injectable()
 export class AdminService {
-    constructor(private readonly prisma: PrismaService, private readonly inventory: InventoryService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly inventory: InventoryService,
+        private readonly rewards: RewardsService,
+    ) { }
 
     // Danh sách đơn: lọc trạng thái / ngày / tìm kiếm + phân trang
     async listOrders(q: ListOrdersQueryDto) {
@@ -196,9 +201,10 @@ export class AdminService {
                     data: { usedAt: null, usedOrderId: null },
                 });
                 if (order.loyaltyPointsEarned > 0) {
-                    const [user] = await tx.$queryRaw<{ loyaltyPoints: number }[]>`
-                        SELECT "loyaltyPoints" FROM "users" WHERE "id" = ${order.userId} FOR UPDATE
-                    `;
+                    const user = await tx.user.findUnique({
+                        where: { id: order.userId },
+                        select: { loyaltyPoints: true },
+                    });
                     const pointsToRefund = Math.min(order.loyaltyPointsEarned, user?.loyaltyPoints ?? 0);
                     if (pointsToRefund > 0) {
                         const updatedUser = await tx.user.update({
@@ -219,11 +225,21 @@ export class AdminService {
                 }
             }
 
+            let pointsEarned: number | undefined;
+            if (next === OrderStatus.COMPLETED && order.loyaltyPointsEarned === 0) {
+                pointsEarned = await this.rewards.earnPoints(tx, {
+                    id: order.id,
+                    userId: order.userId,
+                    total: order.total,
+                });
+            }
+
             return tx.order.update({
                 where: { id },
                 data: {
                     status: next,
                     notifications: { create: { status: next } },
+                    ...(pointsEarned !== undefined && { loyaltyPointsEarned: pointsEarned }),
                     ...(compensationAmount !== undefined && {
                         compensationIssued: { create: { amount: compensationAmount } },
                     }),
@@ -970,15 +986,12 @@ export class AdminService {
 
     // Bật / tắt một voucher (mã tắt thì khách không áp dụng được)
     async togglePromotionActive(id: string) {
-        return this.prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT "id" FROM "promotions" WHERE "id" = ${id} FOR UPDATE`;
-            const promo = await tx.promotion.findUnique({ where: { id } });
-            if (!promo) throw new NotFoundException(`Không tìm thấy voucher ${id}`);
+        const promo = await this.prisma.promotion.findUnique({ where: { id } });
+        if (!promo) throw new NotFoundException(`Không tìm thấy voucher ${id}`);
 
-            return tx.promotion.update({
-                where: { id },
-                data: { isActive: !promo.isActive },
-            });
+        return this.prisma.promotion.update({
+            where: { id },
+            data: { isActive: !promo.isActive },
         });
     }
 }

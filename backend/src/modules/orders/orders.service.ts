@@ -51,15 +51,11 @@ export class OrdersService {
             let finalDiscount = 0;
 
             if (dto.promoCode) {
-                const code = dto.promoCode.trim().toUpperCase();
-                await tx.$queryRaw`
-                    SELECT "id" FROM "promotions" WHERE "code" = ${code} FOR UPDATE
-                `;
-                await this.rewardsService.assertVoucherUsable(userId, code, tx);
+                await this.rewardsService.assertVoucherUsable(userId, dto.promoCode);
                 const promoResult = await this.promotionsService.applyPromotion({
-                    code,
+                    code: dto.promoCode,
                     subtotal: calculatedTotal
-                }, tx);
+                });
 
                 finalDiscount = promoResult.discountAmount;
                 finalTotal -= finalDiscount;

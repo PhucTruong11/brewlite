@@ -21,9 +21,13 @@ describe('AdminService', () => {
         userVoucher: { groupBy: vi.fn() },
     };
     const inventory = { release: vi.fn(), restore: vi.fn() };
-    const service = new AdminService(prisma as never, inventory as never);
+    const rewards = { earnPoints: vi.fn() };
+    const service = new AdminService(prisma as never, inventory as never, rewards as never);
 
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        rewards.earnPoints.mockResolvedValue(0);
+    });
 
     it('danh sách admin loại đơn chờ thanh toán và chỉ giữ đơn hủy đã trả tiền', async () => {
         prisma.order.findMany.mockResolvedValue([]);
@@ -200,6 +204,39 @@ describe('AdminService', () => {
         await expect(service.updateStatus('o1', 'PREPARING' as never)).rejects.toThrow(BadRequestException);
     });
 
+    it('chỉ cộng điểm khi admin chuyển đơn sang COMPLETED', async () => {
+        tx.order.findUnique.mockResolvedValue({
+            id: 'o1', status: 'READY', userId: 'u1', total: 50_000,
+            compensationSourceId: null, loyaltyPointsEarned: 0,
+            payments: [{ amount: 50_000 }], items: [],
+        });
+        rewards.earnPoints.mockResolvedValue(5);
+
+        await service.updateStatus('o1', 'COMPLETED' as never);
+
+        expect(rewards.earnPoints).toHaveBeenCalledWith(tx, {
+            id: 'o1', userId: 'u1', total: 50_000,
+        });
+        expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ status: 'COMPLETED', loyaltyPointsEarned: 5 }),
+        }));
+    });
+
+    it('tính điểm đơn thay thế theo tổng giá, không phải phần thanh toán thêm', async () => {
+        tx.order.findUnique.mockResolvedValue({
+            id: 'replacement1', status: 'READY', userId: 'u1', total: 75_000,
+            compensationSourceId: 'original1', loyaltyPointsEarned: 0,
+            payments: [{ amount: 25_000 }], items: [],
+        });
+        rewards.earnPoints.mockResolvedValue(7);
+
+        await service.updateStatus('replacement1', 'COMPLETED' as never);
+
+        expect(rewards.earnPoints).toHaveBeenCalledWith(tx, {
+            id: 'replacement1', userId: 'u1', total: 75_000,
+        });
+    });
+
     it.each(['PENDING', 'PAYMENT_FAILED', 'PREPARING', 'READY', 'COMPLETED'])(
         'chặn admin hủy đơn %s',
         async (status) => {
@@ -211,7 +248,7 @@ describe('AdminService', () => {
     );
 
     it('hủy đơn PAID: hoàn kho, thu hồi điểm đã cộng và tạo đền bù', async () => {
-        tx.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ loyaltyPoints: 2 }]);
+        tx.user.findUnique.mockResolvedValue({ loyaltyPoints: 2 });
         tx.user.update.mockResolvedValue({ loyaltyPoints: 0 });
         tx.order.findUnique.mockResolvedValue({
             id: 'o1', status: 'PAID', inventoryState: 'LEGACY', userId: 'u1', loyaltyPointsEarned: 4,
