@@ -7,7 +7,7 @@ describe('AdminService', () => {
         $queryRaw: vi.fn(),
         order: { findUnique: vi.fn(), update: vi.fn() },
         product: { update: vi.fn() },
-        user: { findUnique: vi.fn(), update: vi.fn() },
+        user: { update: vi.fn() },
         pointTransaction: { create: vi.fn() },
         promotion: { findUnique: vi.fn(), update: vi.fn() },
         userVoucher: { count: vi.fn(), updateMany: vi.fn() },
@@ -248,7 +248,7 @@ describe('AdminService', () => {
     );
 
     it('hủy đơn PAID: hoàn kho, thu hồi điểm đã cộng và tạo đền bù', async () => {
-        tx.user.findUnique.mockResolvedValue({ loyaltyPoints: 2 });
+        tx.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ loyaltyPoints: 2 }]);
         tx.user.update.mockResolvedValue({ loyaltyPoints: 0 });
         tx.order.findUnique.mockResolvedValue({
             id: 'o1', status: 'PAID', inventoryState: 'LEGACY', userId: 'u1', loyaltyPointsEarned: 4,

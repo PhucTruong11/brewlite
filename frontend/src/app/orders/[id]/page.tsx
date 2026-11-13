@@ -156,7 +156,8 @@ function OrderDetailContent() {
         productId: i.productId,
         size: i.size,
         toppings: i.toppings,
-        quantity: i.qty,
+        qty: i.qty,
+        lineTotal: i.lineTotal,
       }));
       const res = await api.post<{ data: { id: string } }>('/orders/' + order.compensationSourceId + '/replacement', {
         items: itemsToSubmit,

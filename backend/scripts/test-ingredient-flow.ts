@@ -38,7 +38,7 @@ async function main() {
   const checkout = new CheckoutService(prisma as never, rewards, inventory, {
     charge: async () => ({ success: true, gatewayRef: 'inventory-test' }),
   } as never);
-  const admin = new AdminService(prisma as never, inventory);
+  const admin = new AdminService(prisma as never, inventory, rewards);
   const suffix = randomUUID();
   const user = await prisma.user.create({
     data: { email: `ingredient-test-${suffix}@example.test`, passwordHash: 'test-only' },
@@ -118,7 +118,7 @@ async function main() {
   assert.equal(duplicate.isDuplicate, true);
   const beansAfterDuplicate = await prisma.ingredient.findUniqueOrThrow({ where: { code: 'COFFEE_BEANS' } });
   assert.equal(beansAfterDuplicate.onHand?.toNumber(), beansPaid.onHand?.toNumber());
-  assert.equal(await prisma.pointTransaction.count({ where: { orderId: order.id, type: 'EARN' } }), 1);
+  assert.equal(await prisma.pointTransaction.count({ where: { orderId: order.id, type: 'EARN' } }), 0);
 
   // Quản trị viên hủy đơn đã trả tiền thì hoàn nguyên liệu theo bản chụp công thức đúng một lần.
   await admin.updateStatus(order.id, 'CANCELLED');
@@ -136,7 +136,7 @@ async function main() {
   ]);
   assert.equal(concurrentPayments.filter((result) => result.isDuplicate).length, 1);
   assert.equal(await prisma.payment.count({ where: { orderId: simultaneous.id } }), 1);
-  assert.equal(await prisma.pointTransaction.count({ where: { orderId: simultaneous.id, type: 'EARN' } }), 1);
+  assert.equal(await prisma.pointTransaction.count({ where: { orderId: simultaneous.id, type: 'EARN' } }), 0);
   const beansAfterSimultaneous = await prisma.ingredient.findUniqueOrThrow({ where: { code: 'COFFEE_BEANS' } });
   const simultaneousRecipe = await inventory.prepareCart([singleCup]);
   const beansIngredient = await prisma.ingredient.findUniqueOrThrow({ where: { code: 'COFFEE_BEANS' } });

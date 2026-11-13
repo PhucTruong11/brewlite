@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { toOrderItem } from '@/lib/cart';
 import { getCompensation, replacementCheckoutHref, replacementPath } from '@/lib/order-compensation';
 import { useCartStore } from '@/stores/cart.store';
-import { formatVND } from '@/lib/utils';
 import type { ApiResponse, OrderStatus } from '@/types';
 import { CheckoutMethods, type CardFormData, type CardFormErrors } from './CheckoutMethods';
 import { CountdownTimer } from './CountdownTimer';
@@ -107,7 +107,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     setIsPayingCard(true);
     setCardSubmitError(null);
     try {
-      await api.post(`/orders/${sourceId}/replacement/card`, { method: 'CARD' });
+      await api.post(replacementPath(sourceId) + '/card', { orderId, method: 'CARD' });
       clearCart();
       await refetchUser();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
@@ -123,15 +123,16 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
   const handleQuickTestPay = async () => {
     if (isPayingCard) return;
     setIsPayingCard(true);
+    setCardSubmitError(null);
     try {
-      await api.post(`/orders/${sourceId}/replacement/card`, { method: 'EWALLET' });
+      await api.post(replacementPath(sourceId) + '/card', { orderId, method: 'EWALLET' });
       clearCart();
       await refetchUser();
       await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, sourceId] });
       router.push('/orders/' + orderId + '?confirmed=1');
     } catch (err: unknown) {
       const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
-      alert(message || 'Không thể xác nhận thanh toán thử nghiệm.');
+      setCardSubmitError(message || 'Không thể xác nhận thanh toán thử nghiệm.');
     } finally {
       setIsPayingCard(false);
     }
@@ -139,7 +140,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
 
   const handleChooseOtherDrinks = async () => {
     try {
-      await api.post(`/orders/${sourceId}/replacement/cancel`);
+      await api.post(replacementPath(sourceId) + '/cancel', { orderId });
     } catch (err: unknown) {
       const message = isAxiosError<{ message?: string }>(err) ? err.response?.data?.message : null;
       setRecreateError(message || 'Chưa hủy được lượt thanh toán. Vui lòng thử lại.');
@@ -171,7 +172,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     staleTime: 0,
   });
   const createLink = useMutation({
-    mutationFn: () => api.post(replacementPath(sourceId) + '/payment'),
+    mutationFn: () => api.post(replacementPath(sourceId) + '/payment', { orderId }),
     onSuccess: () => state.refetch(),
   });
 
@@ -220,7 +221,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
   };
 
   useEffect(() => {
-    if (matches && replacement && replacement.amountDue > 0 && !replacement.paymentLink && !createLink.isPending && !createLink.isError) {
+    if (matches && replacement?.canPay && !replacement.paymentLink && !createLink.isPending && !createLink.isError) {
       createLink.mutate();
     }
   }, [matches, replacement, createLink]);
@@ -253,7 +254,7 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     );
   }
 
-  if (isError || !state.data || !replacement || !order.data || isMismatch) {
+  if (isError || !state.data || !replacement || !order.data || isMismatch || replacement.status === 'CANCELLED') {
     return (
       <main className="mx-auto flex max-w-xl flex-col items-center gap-4 px-4 py-16 text-center">
         <div className="flex size-14 items-center justify-center rounded-full bg-amber-100 text-amber-700 text-2xl font-bold">
@@ -284,17 +285,24 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     );
   }
 
+  if (replacement.status !== 'PENDING') {
+    return (
+      <main className="mx-auto max-w-xl space-y-4 px-4 py-16 text-center">
+        <h2 className="text-xl font-bold text-text">Đơn thay thế đã được xác nhận</h2>
+        {replacement.amountDue === 0 && <p>Giá trị đền bù đã thanh toán toàn bộ đơn thay thế.</p>}
+        <Link href={`/orders/${orderId}?confirmed=1`} className="inline-block rounded-full bg-primary px-5 py-3 font-bold text-white">
+          Xem chi tiết đơn
+        </Link>
+      </main>
+    );
+  }
+
   const items = order.data.items.map((item) => ({
     productId: item.productId, size: item.size, toppings: item.toppings, quantity: item.qty,
     name: item.product.name, imageUrl: item.product.imageUrl, lineTotal: item.lineTotal, unitPrice: item.lineTotal / item.qty,
   }));
   const expired = !replacement.canPay && replacement.amountDue > 0;
   const error = isAxiosError<{ message?: string }>(createLink.error) ? createLink.error.response?.data?.message : null;
-
-  const handleCompleteZeroDue = () => {
-    clearCart();
-    router.push('/orders/' + orderId + '?confirmed=1');
-  };
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-6 pb-20 lg:px-8">
@@ -309,54 +317,36 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <div className="lg:col-span-7">
-          {replacement.amountDue > 0 ? (
-            <CheckoutMethods
-              method={method}
-              onMethodChange={setMethod}
-              finalTotal={replacement.amountDue}
-              qrUrl={replacement.paymentLink?.qrCodeUrl ?? ''}
-              bankInfo={state.data.bankInfo}
-              cardInfo={cardInfo}
-              onCardInfoChange={handleCardInfoChange}
-              cardErrors={cardErrors}
-              onFillDemoCard={handleFillDemoCard}
-              onClearCard={handleClearCard}
-              vietQrOnly={false}
-              qrAction={!expired && (
-                <div className="space-y-2">
-                  <button type="button" onClick={() => createLink.mutate()} disabled={createLink.isPending} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
-                    {createLink.isPending ? 'Đang tạo mã…' : 'Tạo mã VietQR'}
-                  </button>
-                  {createLink.isError && <p role="alert" className="text-sm text-rose-700">{error || 'Chưa tạo được mã VietQR.'}</p>}
-                </div>
-              )}
-            />
-          ) : (
-            <div className="rounded-2xl border border-primary/20 bg-surface p-6 shadow-sm space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 font-black text-xl">
-                  ✓
-                </div>
-                <div>
-                  <h3 className="font-bold text-text text-lg">Khấu trừ toàn bộ từ đơn gốc</h3>
-                  <p className="text-sm text-text/70 mt-1">
-                    Giá trị từ đơn cũ (<span className="font-bold text-primary">{formatVND(state.data.amount)}</span>) đã bù đủ 100% cho món mới. Bạn không cần thanh toán thêm bất kỳ chi phí nào.
-                  </p>
-                </div>
+          <CheckoutMethods
+            method={method}
+            onMethodChange={setMethod}
+            finalTotal={replacement.amountDue}
+            qrUrl={replacement.paymentLink?.qrCodeUrl ?? ''}
+            bankInfo={state.data.bankInfo}
+            cardInfo={cardInfo}
+            onCardInfoChange={handleCardInfoChange}
+            cardErrors={cardErrors}
+            onFillDemoCard={handleFillDemoCard}
+            onClearCard={handleClearCard}
+            vietQrOnly={false}
+            qrAction={!expired && (
+              <div className="space-y-2">
+                <button type="button" onClick={() => createLink.mutate()} disabled={createLink.isPending} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                  {createLink.isPending ? 'Đang tạo mã…' : 'Tạo mã VietQR'}
+                </button>
+                {createLink.isError && <p role="alert" className="text-sm text-rose-700">{error || 'Chưa tạo được mã VietQR.'}</p>}
               </div>
-              <div className="rounded-xl bg-primary/5 p-4 text-xs text-text/80 leading-relaxed border border-primary/10">
-                👉 Vui lòng kiểm tra lại món đã chọn ở cột tóm tắt bên phải và nhấn nút <strong className="text-primary font-bold">&quot;Hoàn tất&quot;</strong> để gửi đơn đến quầy pha chế.
-              </div>
-            </div>
-          )}
+            )}
+          />
         </div>
         <div className="lg:col-span-5">
+          {cardSubmitError && <p role="alert" className="mb-3 text-sm text-rose-700">{cardSubmitError}</p>}
           <OrderSummary
             items={items}
             subtotal={replacement.total}
             compensationAmount={state.data.amount}
             finalTotal={replacement.amountDue}
-            pointsEarned={Math.floor(replacement.amountDue / 10_000)}
+            pointsEarned={Math.floor(replacement.total / 10_000)}
             isSubmitting={createLink.isPending || isRecreating || isPayingCard}
             isExpired={expired}
             canRenew={expired}
@@ -364,10 +354,9 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
             onRenew={handleRecreateOrder}
             method={method}
             isCheckingStatus={state.isFetching}
-            onPayment={replacement.amountDue === 0 ? handleCompleteZeroDue : (method === 'CARD' ? handlePayWithCard : undefined)}
+            onPayment={method === 'CARD' ? handlePayWithCard : undefined}
             onCheckPaymentStatus={replacement.paymentLink ? () => void state.refetch() : undefined}
             onQuickTest={handleQuickTestPay}
-            statusFeedback={cardSubmitError ? { type: 'error', message: cardSubmitError } : undefined}
           />
           <div className="mt-3 text-center">
             <button

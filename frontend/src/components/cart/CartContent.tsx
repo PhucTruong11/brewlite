@@ -253,7 +253,7 @@ export function CartContent({ onClose }: CartContentProps) {
     setErrorMsg(null);
     try {
       if (pendingReplacement && replacementSourceId) {
-        await api.post(replacementPath(replacementSourceId) + '/cancel');
+        await api.post(replacementPath(replacementSourceId) + '/cancel', { orderId: pendingReplacement.id });
         await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, replacementSourceId] });
       } else if (pendingOrder) {
         await api.post(`/checkout/${pendingOrder.id}/cancel`);

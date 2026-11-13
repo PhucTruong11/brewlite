@@ -27,13 +27,13 @@ function ReplacementEntry() {
     if (!data || !user) return;
     const order = data.replacement;
     if (resetRequested && order?.status === 'PENDING') {
-      api.post('/orders/' + id + '/replacement/cancel')
-        .catch(() => null)
-        .finally(() => {
-          clearCart();
+      api.post('/orders/' + id + '/replacement/cancel', { orderId: order.id })
+        .then(() => {
+          if (useCartStore.getState().replacementSourceId === id) clearCart();
           selectReplacement(id);
           router.replace('/');
-        });
+        })
+        .catch(() => router.replace(replacementCheckoutHref(order.id, id)));
       return;
     }
     if (!order || order.status === 'CANCELLED') {
