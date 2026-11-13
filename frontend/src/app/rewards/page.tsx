@@ -24,6 +24,7 @@ interface MyVoucher {
   code: string;
   description: string | null;
   count: number;
+  endDate: string | null;
 }
 interface HistoryItem {
   id: string;
@@ -51,6 +52,15 @@ function getErrorMessage(err: unknown, fallback: string): string {
     return Array.isArray(data.message) ? data.message.join(', ') : String(data.message);
   }
   return fallback;
+}
+
+function formatVoucherEndDate(endDate: string): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date(endDate));
 }
 
 function RewardsContent() {
@@ -198,6 +208,11 @@ function RewardsContent() {
                     </span>
                     <p className="text-sm text-text mt-2">{v.description}</p>
                     <p className="text-xs text-gray-400 mt-1">Nhập mã này ở trang thanh toán</p>
+                    {v.endDate && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Hết hạn: <span className="font-semibold text-gray-700">{formatVoucherEndDate(v.endDate)}</span>
+                      </p>
+                    )}
                   </div>
                   <span className="text-xl font-black text-primary shrink-0">×{v.count}</span>
                 </div>
