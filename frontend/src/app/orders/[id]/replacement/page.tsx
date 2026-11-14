@@ -36,7 +36,7 @@ function ReplacementEntry() {
         .catch(() => router.replace(replacementCheckoutHref(order.id, id)));
       return;
     }
-    if (!order || order.status === 'CANCELLED') {
+    if (!order) {
       selectReplacement(id);
       router.replace('/');
     } else if (order.status === 'PENDING') {

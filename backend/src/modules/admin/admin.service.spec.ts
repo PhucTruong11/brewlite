@@ -10,7 +10,7 @@ describe('AdminService', () => {
         user: { update: vi.fn() },
         pointTransaction: { create: vi.fn() },
         promotion: { findUnique: vi.fn(), update: vi.fn() },
-        userVoucher: { count: vi.fn(), updateMany: vi.fn() },
+        userVoucher: { count: vi.fn() },
     };
     const prisma = {
         $transaction: vi.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
@@ -21,7 +21,7 @@ describe('AdminService', () => {
         userVoucher: { groupBy: vi.fn() },
     };
     const inventory = { release: vi.fn(), restore: vi.fn() };
-    const rewards = { earnPoints: vi.fn() };
+    const rewards = { earnPoints: vi.fn(), restoreVoucher: vi.fn() };
     const service = new AdminService(prisma as never, inventory as never, rewards as never);
 
     beforeEach(() => {
@@ -252,6 +252,7 @@ describe('AdminService', () => {
         tx.user.update.mockResolvedValue({ loyaltyPoints: 0 });
         tx.order.findUnique.mockResolvedValue({
             id: 'o1', status: 'PAID', inventoryState: 'LEGACY', userId: 'u1', loyaltyPointsEarned: 4,
+            total: 45_000, discount: 5_000,
             payments: [{ amount: 45_000 }], items: [{ productId: 'p1', qty: 2 }],
         });
         await service.updateStatus('o1', 'CANCELLED' as never);
@@ -272,10 +273,7 @@ describe('AdminService', () => {
                 orderId: 'o1',
             },
         });
-        expect(tx.userVoucher.updateMany).toHaveBeenCalledWith({
-            where: { usedOrderId: 'o1' },
-            data: { usedAt: null, usedOrderId: null },
-        });
+        expect(rewards.restoreVoucher).toHaveBeenCalledWith(tx, 'o1');
         expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: {
             status: 'CANCELLED',
             compensationIssued: { create: { amount: 45_000 } },
@@ -286,7 +284,8 @@ describe('AdminService', () => {
     it('hủy đơn nguyên liệu: hoàn nguyên liệu từ snapshot, không cộng Product.stock', async () => {
         tx.order.findUnique.mockResolvedValue({
             id: 'o2', status: 'PAID', inventoryState: 'CONSUMED', userId: 'u1',
-            loyaltyPointsEarned: 0, payments: [{ amount: 30_000 }], items: [{ recipeSnapshot: [{ ingredientId: 'i1', quantity: '20.000' }] }],
+            total: 30_000, loyaltyPointsEarned: 0,
+            payments: [{ amount: 30_000 }], items: [{ recipeSnapshot: [{ ingredientId: 'i1', quantity: '20.000' }] }],
         });
         await service.updateStatus('o2', 'CANCELLED' as never);
         expect(inventory.restore).toHaveBeenCalledWith(tx, expect.objectContaining({ id: 'o2' }));
