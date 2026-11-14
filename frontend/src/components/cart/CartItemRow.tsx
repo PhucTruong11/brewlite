@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { Trash2, Minus, Plus } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import { useCartStore, type CartItem } from '@/stores/cart.store';
 import { formatCartToppings, getCartItemKey, getCartLineTotal, toOrderItem } from '@/lib/cart';
 import { cartValidationMessage, validateCart } from '@/lib/validate-cart';
@@ -11,10 +11,11 @@ interface CartItemRowProps {
   item: CartItem;
   index: number;
   disabled?: boolean;
+  onModify?: () => void;
 }
 
-export function CartItemRow({ item, index, disabled = false }: CartItemRowProps) {
-  const { items, updateQuantity, removeItem } = useCartStore();
+export function CartItemRow({ item, index, disabled = false, onModify }: CartItemRowProps) {
+  const { items, updateQuantity } = useCartStore();
   const [checking, setChecking] = useState(false);
   const [stockError, setStockError] = useState<{ message: string; cartSignature: string } | null>(null);
   const cartSignature = JSON.stringify(items.map(toOrderItem));
@@ -22,12 +23,14 @@ export function CartItemRow({ item, index, disabled = false }: CartItemRowProps)
 
   const handleDecrease = () => {
     if (disabled) return;
+    onModify?.();
     setStockError(null);
     updateQuantity(index, item.quantity - 1);
   };
 
   const handleIncrease = async () => {
     if (checking || disabled) return;
+    onModify?.();
     const checkedCartSignature = cartSignature;
     const cartUnchanged = () =>
       JSON.stringify(useCartStore.getState().items.map(toOrderItem)) === checkedCartSignature;
@@ -58,11 +61,6 @@ export function CartItemRow({ item, index, disabled = false }: CartItemRowProps)
     } finally {
       setChecking(false);
     }
-  };
-
-  const handleRemove = () => {
-    if (disabled) return;
-    removeItem(index);
   };
 
   return (
@@ -104,21 +102,13 @@ export function CartItemRow({ item, index, disabled = false }: CartItemRowProps)
         </p>
       </div>
 
-      {/* 4. Nhóm điều khiển: Số lượng & Nút Xóa */}
-      <div className="flex min-h-20 flex-col items-end justify-between gap-3">
-        <button
-          onClick={handleRemove}
-          disabled={disabled}
-          className="text-gray-300 hover:text-red-500 transition-colors p-1"
-          title="Xóa món này"
-        >
-          <Trash2 size={20} />
-        </button>
-
+      {/* 4. Nhóm điều khiển: Số lượng */}
+      <div className="flex h-20 flex-col items-end justify-end">
         <div className="flex items-center gap-3 bg-white rounded-full px-1.5 py-1.5 border border-gray-200 shadow-sm">
           <button
             onClick={handleDecrease}
             disabled={disabled}
+            aria-label="Giảm số lượng"
             className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-text hover:bg-gray-200 transition-colors"
           >
             <Minus size={14} />
@@ -131,13 +121,14 @@ export function CartItemRow({ item, index, disabled = false }: CartItemRowProps)
           <button
             onClick={handleIncrease}
             disabled={checking || disabled}
+            aria-label="Tăng số lượng"
             title={checking ? 'Đang kiểm tra nguyên liệu' : 'Thêm một phần'}
             className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-text hover:bg-gray-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus size={14} />
           </button>
         </div>
-        {visibleStockError && <p role="alert" className="max-w-48 text-right text-xs text-red-600">{visibleStockError}</p>}
+        {visibleStockError && <p role="alert" className="max-w-48 text-right text-xs text-red-600 mt-1">{visibleStockError}</p>}
       </div>
     </div>
   );

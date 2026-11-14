@@ -151,7 +151,7 @@ export class CheckoutService {
       if (this.deadline(order).getTime() > Date.now()) return false;
       await this.inventory.release(tx, order);
       await this.rewardsService.restoreVoucher(tx, orderId);
-      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
+      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
       return true;
     });
   }
@@ -185,9 +185,7 @@ export class CheckoutService {
       }
       await this.inventory.release(tx, order);
       await this.rewardsService.restoreVoucher(tx, orderId);
-      await tx.order.update({ where: { id: orderId }, data: {
-        status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } },
-      } });
+      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
       this.payosLinkCache.delete(orderId);
       return { status: OrderStatus.CANCELLED };
     }, { timeout: 15000 });
@@ -405,7 +403,7 @@ export class CheckoutService {
       if (this.deadline(lockedOrder).getTime() <= Date.now()) {
         await this.inventory.release(tx, lockedOrder);
         await this.rewardsService.restoreVoucher(tx, orderId);
-        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } } });
+        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED } });
         return { expired: true as const };
       }
 

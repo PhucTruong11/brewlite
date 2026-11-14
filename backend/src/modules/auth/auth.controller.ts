@@ -1,18 +1,14 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
-  Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Res,
   UnauthorizedException,
   UseGuards,
-  Request,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service.js';

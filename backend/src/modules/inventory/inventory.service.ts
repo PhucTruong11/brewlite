@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
-import { InventoryState, Prisma } from '@prisma/client';
+import { InventoryState, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderItemDto } from '../orders/dto/create-order.dto.js';
 
@@ -157,17 +157,24 @@ export class InventoryService {
     }
   }
 
-  private requirementsFromSnapshots(order: Pick<OrderWithSnapshots, 'items'>) {
+  private requirementsFromSnapshots(order: Pick<OrderWithSnapshots, 'items'>, safe = false) {
     const quantities = new Map<string, Prisma.Decimal>();
     for (const item of order.items) {
-      if (!Array.isArray(item.recipeSnapshot)) throw new ConflictException('Đơn hàng thiếu bản chụp công thức');
+      if (!Array.isArray(item.recipeSnapshot)) {
+        if (safe) continue;
+        throw new ConflictException('Đơn hàng thiếu bản chụp công thức');
+      }
       for (const raw of item.recipeSnapshot) {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
             typeof raw.ingredientId !== 'string' || typeof raw.quantity !== 'string') {
+          if (safe) continue;
           throw new ConflictException('Bản chụp công thức không hợp lệ');
         }
         const quantity = new Prisma.Decimal(raw.quantity);
-        if (!quantity.isFinite() || quantity.lte(0)) throw new ConflictException('Lượng nguyên liệu không hợp lệ');
+        if (!quantity.isFinite() || quantity.lte(0)) {
+          if (safe) continue;
+          throw new ConflictException('Lượng nguyên liệu không hợp lệ');
+        }
         quantities.set(raw.ingredientId, (quantities.get(raw.ingredientId) ?? new Prisma.Decimal(0)).add(quantity));
       }
     }
@@ -194,7 +201,7 @@ export class InventoryService {
     await db.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${order.id} FOR UPDATE`;
     const current = await db.order.findUnique({ where: { id: order.id }, include: { items: true } });
     if (!current || current.inventoryState !== InventoryState.RESERVED) return;
-    const released = new Map(this.requirementsFromSnapshots(current));
+    const released = new Map(this.requirementsFromSnapshots(current, true));
     const ids = [...released.keys()];
     if (ids.length) {
       // Khóa cùng thứ tự với reserve/consume. Đơn tạo đồng thời phải đợi ở
@@ -202,12 +209,12 @@ export class InventoryService {
       await db.$queryRaw`SELECT "id" FROM "ingredients" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`;
       const ingredients = await db.ingredient.findMany({ where: { id: { in: ids }, trackStock: true } });
       const remainingOrders = await db.order.findMany({
-        where: { id: { not: order.id }, inventoryState: InventoryState.RESERVED },
+        where: { id: { not: order.id }, status: OrderStatus.PENDING, inventoryState: InventoryState.RESERVED },
         select: { items: { select: { recipeSnapshot: true } } },
       });
       const remaining = new Map<string, Prisma.Decimal>();
       for (const other of remainingOrders) {
-        for (const [id, quantity] of this.requirementsFromSnapshots(other)) {
+        for (const [id, quantity] of this.requirementsFromSnapshots(other, true)) {
           if (released.has(id)) remaining.set(id, (remaining.get(id) ?? new Prisma.Decimal(0)).add(quantity));
         }
       }

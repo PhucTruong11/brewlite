@@ -202,7 +202,6 @@ export class OrderCompensationService {
         where: { id: order.id },
         data: {
           status: OrderStatus.CANCELLED,
-          notifications: { create: { status: OrderStatus.CANCELLED } },
         },
       });
     });
@@ -280,7 +279,7 @@ export class OrderCompensationService {
       await this.rewards.restoreVoucher(tx, id);
       await tx.order.update({
         where: { id },
-        data: { status: OrderStatus.CANCELLED, notifications: { create: { status: OrderStatus.CANCELLED } } },
+        data: { status: OrderStatus.CANCELLED },
       });
     });
   }
