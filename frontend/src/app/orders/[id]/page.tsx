@@ -220,12 +220,12 @@ function OrderDetailContent() {
 
       {order.compensationIssued && (
         <div className="space-y-2 rounded-2xl border border-primary/20 bg-primary/5 p-5">
-          <p className="font-bold">Cửa hàng đã hủy đơn. Giá trị đền bù {formatVND(order.compensationIssued.amount)}.</p>
+          <p className="font-bold">Cửa hàng đã hủy đơn.{order.compensationIssued.amount > 0 && ` Giá trị đền bù ${formatVND(order.compensationIssued.amount)}.`}</p>
           {order.compensationIssued.replacements && order.compensationIssued.replacements.length > 0 ? (
             <Link href={'/orders/' + order.compensationIssued.replacements[0].id} className="inline-block text-sm font-bold text-emerald-700 underline">
               ✓ Đã đổi sang đơn #{order.compensationIssued.replacements[0].id.slice(0, 8).toUpperCase()} (Xem chi tiết)
             </Link>
-          ) : (
+          ) : order.compensationIssued.amount > 0 && (
             <Link href={'/orders/' + order.id + '/replacement'} className="inline-block text-sm font-bold text-primary underline">
               Chọn món thay thế
             </Link>

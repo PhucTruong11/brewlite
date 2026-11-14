@@ -4,6 +4,14 @@ import { CreateOrderDto } from './dto/create-order.dto.js';
 import { PromotionsService } from '../promotions/promotions.service.js';
 import { RewardsService } from '../rewards/rewards.service.js';
 import { InventoryService, RESERVATION_DURATION_MS } from '../inventory/inventory.service.js';
+import { OrderStatus, Prisma } from '@prisma/client';
+
+const CONFIRMED_REPLACEMENTS = {
+    OR: [
+        { status: { in: [OrderStatus.PAID, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.COMPLETED] } },
+        { compensationIssued: { isNot: null } },
+    ],
+} satisfies Prisma.OrderWhereInput;
 
 @Injectable()
 export class OrdersService {
@@ -142,7 +150,7 @@ export class OrdersService {
                         amount: true,
                         replacements: {
                             select: { id: true, status: true },
-                            where: { status: { in: ['PAID', 'PREPARING', 'READY', 'COMPLETED'] } },
+                            where: CONFIRMED_REPLACEMENTS,
                         },
                     },
                 },
@@ -179,7 +187,7 @@ export class OrdersService {
                                     amount: true,
                                     replacements: {
                                         select: { id: true, status: true },
-                                        where: { status: { in: ['PAID', 'PREPARING', 'READY', 'COMPLETED'] } },
+                                        where: CONFIRMED_REPLACEMENTS,
                                     },
                                 },
                             },

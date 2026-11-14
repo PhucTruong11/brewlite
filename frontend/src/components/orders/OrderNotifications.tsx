@@ -110,7 +110,8 @@ export function OrderNotifications({ userId }: { userId: string }) {
           {!isPending && displayItems.length === 0 && <p className="p-4 text-sm text-text/70">Bạn chưa có thông báo.</p>}
           <ul className="max-h-[min(65vh,26rem)] overflow-y-auto">
             {displayItems.map((item) => {
-              const compensation = item.status === 'CANCELLED' ? item.order.compensationIssued : null;
+              const issued = item.status === 'CANCELLED' ? item.order.compensationIssued : null;
+              const compensation = issued && issued.amount > 0 ? issued : null;
               const isAlreadyReplaced = Boolean(compensation?.replacements && compensation.replacements.length > 0);
               const activeReplacement = isAlreadyReplaced ? compensation!.replacements![0] : null;
               const href = activeReplacement

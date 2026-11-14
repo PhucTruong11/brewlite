@@ -254,7 +254,18 @@ export function CompensationCheckout({ orderId, sourceId }: { orderId: string; s
     );
   }
 
-  if (isError || !state.data || !replacement || !order.data || isMismatch || replacement.status === 'CANCELLED') {
+  if (matches && replacement?.status === 'CANCELLED') {
+    return (
+      <main className="mx-auto max-w-xl space-y-4 px-4 py-16 text-center">
+        <h2 className="text-xl font-bold text-text">Cửa hàng đã hủy đơn thay thế</h2>
+        <Link href={'/orders/' + orderId} className="inline-block rounded-full bg-primary px-5 py-3 font-bold text-white">
+          Xem lượt đền bù mới
+        </Link>
+      </main>
+    );
+  }
+
+  if (isError || !state.data || !replacement || !order.data || isMismatch) {
     return (
       <main className="mx-auto flex max-w-xl flex-col items-center gap-4 px-4 py-16 text-center">
         <div className="flex size-14 items-center justify-center rounded-full bg-amber-100 text-amber-700 text-2xl font-bold">

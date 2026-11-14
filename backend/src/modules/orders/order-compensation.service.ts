@@ -34,7 +34,7 @@ export class OrderCompensationService {
     const compensation = await this.prisma.orderCompensation.findFirst({
       where: { originalOrderId, originalOrder: { userId } },
     });
-    if (!compensation) throw new NotFoundException('Không tìm thấy lượt đền bù');
+    if (!compensation || compensation.amount === 0) throw new NotFoundException('Không tìm thấy lượt đền bù để chọn món thay thế');
     let order = await this.findCurrent(this.prisma, originalOrderId);
     if (order?.status === OrderStatus.PENDING && order.reservationExpiresAt! <= new Date()) {
       await this.expire(order.id);

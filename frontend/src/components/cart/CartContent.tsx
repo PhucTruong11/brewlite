@@ -179,9 +179,15 @@ export function CartContent({ onClose }: CartContentProps) {
       if (replacementSourceId) {
         const latest = await compensation.refetch();
         if (latest.isError) throw new Error('Không kiểm tra được đơn thay thế. Vui lòng thử lại.');
-        if (latest.data?.replacement?.status === 'PENDING') {
+        const replacement = latest.data?.replacement;
+        if (replacement) {
+          const cart = useCartStore.getState();
+          if (cart.currentUserId !== user?.id || cart.replacementSourceId !== replacementSourceId) return;
+          if (replacement.status !== 'PENDING') cart.clearCart();
           if (onClose) onClose();
-          router.push(replacementCheckoutHref(latest.data.replacement.id, replacementSourceId));
+          router.push(replacement.status === 'PENDING'
+            ? replacementCheckoutHref(replacement.id, replacementSourceId)
+            : '/orders/' + replacement.id);
           navigated = true;
           return;
         }

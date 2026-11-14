@@ -109,14 +109,14 @@ Nếu DB mới, chạy phần migration/seed ở trên với Compose trước kh
 
 ## Kiểm thử đền bù đơn bị hủy
 
-Khi chạy local, nút **Test nhanh** mô phỏng thanh toán, không cần tài khoản hoặc khóa PayOS. API vẫn xử lý trừ kho và cộng điểm như một giao dịch thành công.
+Khi chạy local, nút **Test nhanh** mô phỏng thanh toán, không cần tài khoản hoặc khóa PayOS. API vẫn trừ kho khi thanh toán thành công và cộng điểm khi đơn chuyển sang **Hoàn tất**.
 
 Hai script `node tests/test_race_condition.js` (từ thư mục repo) và `npx tsx scripts/simulate-payos.ts` (từ `backend`) chạy bằng fixture tự dọn trong DB riêng `brewlite_test` trên localhost:5433. DB test cần được tạo và áp migrations trước; các script không ghi đè kho hoặc tạo đơn giả trong DB `brewlite` đang dùng.
 
 Áp migration `20261110000200_order_compensation` và chạy lại API/web đã build. Dùng hai phiên trình duyệt riêng cho khách và admin.
 
 1. Khách đặt một đơn và hoàn tất thanh toán thẻ mô phỏng. Admin vào **Quản trị → Đơn hàng → Cần xử lý**, chọn **Hủy đơn** khi đơn chưa được pha chế.
-2. Từ chuông hoặc **Lịch sử → Chi tiết đơn**, khách mở **Chọn món thay thế**. Giá trị đền bù bằng toàn bộ giá trị món nước của đơn gốc (bảo lưu trọn vẹn quyền lợi mã giảm giá cho khách, đồng thời hoàn lại voucher vào ví nếu đơn có dùng voucher đổi điểm).
+2. Từ chuông hoặc **Lịch sử → Chi tiết đơn**, khách mở **Chọn món thay thế**. Giá trị đền bù bằng số tiền khách đã trả sau giảm giá. Voucher đổi điểm đã dùng được trả về ví và có thể dùng nếu mã còn hiệu lực. Ví dụ, đơn 100.000đ dùng voucher 10.000đ được đền bù 90.000đ và trả lại voucher. Đơn 0đ chỉ trả lại voucher đổi điểm nếu có. Nếu một đơn thay thế đã thanh toán cũng bị cửa hàng hủy, lượt mới gồm giá trị đền bù đã dùng và phần khách trả thêm.
 3. Đơn đồng giá vào hàng đợi ngay. Đơn rẻ hơn cần thêm món hoặc topping. Với đơn đắt hơn, khách có 5 phút để quét mã VietQR ngay trên trang BrewLite và thanh toán phần chênh lệch qua PayOS. Đơn vào hàng đợi sau khi giao dịch được xác nhận.
 4. Để kiểm tra lần thử hết hạn, tạo mã QR rồi để qua thời hạn giữ đơn. Sau khi PayOS xác nhận link hết hạn hoặc đã hủy và chưa nhận tiền, khách có thể chọn lại.
 

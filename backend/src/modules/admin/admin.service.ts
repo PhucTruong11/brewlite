@@ -179,11 +179,11 @@ export class AdminService {
 
             let compensationAmount: number | undefined;
             if (next === OrderStatus.CANCELLED) {
-                const originalOrderValue = order.total !== undefined ? order.total + (order.discount ?? 0) : undefined;
-                compensationAmount = order.compensationSourceId ? order.total : (originalOrderValue ?? order.payments[0]?.amount);
-                if (compensationAmount === undefined) {
-                    throw new ConflictException('Đơn thiếu giao dịch thanh toán để xác định giá trị đền bù');
-                }
+                // Đơn thay thế đã dùng đền bù cũ và có thể đã trả thêm phần chênh lệch.
+                // Với đơn thường cũ thiếu bản ghi Payment, total vẫn là giá sau giảm.
+                compensationAmount = order.compensationSourceId
+                    ? order.total
+                    : (order.payments[0]?.amount ?? order.total);
                 if (order.inventoryState === 'CONSUMED') {
                     await this.inventory.restore(tx, order);
                 } else if (order.inventoryState === 'LEGACY') {
@@ -195,11 +195,7 @@ export class AdminService {
                         });
                     }
                 }
-                // Hoàn lại voucher cho khách hàng nếu đơn có sử dụng mã ưu đãi đổi điểm
-                await tx.userVoucher?.updateMany({
-                    where: { usedOrderId: id },
-                    data: { usedAt: null, usedOrderId: null },
-                });
+                await this.rewards.restoreVoucher(tx, id);
                 if (order.loyaltyPointsEarned > 0) {
                     const [user] = await tx.$queryRaw<{ loyaltyPoints: number }[]>`
                         SELECT "loyaltyPoints" FROM "users" WHERE "id" = ${order.userId} FOR UPDATE

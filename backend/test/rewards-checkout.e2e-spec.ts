@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
+import { ProductSize } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { PrismaService } from '../src/modules/prisma/prisma.service.js';
@@ -20,10 +21,13 @@ describe('Điểm thưởng, voucher và giao dịch thanh toán', () => {
   const api = () => request(app.getHttpServer());
   const auth = () => ({ Authorization: 'Bearer ' + token });
   const balance = async () => (await db.user.findUniqueOrThrow({ where: { id: userId } })).loyaltyPoints;
-  const create = async (promoCode?: string) => (await api().post('/api/orders').set(auth())
-    .send({ items: [{ productId, size: 'S', qty: 1, lineTotal: 1 }], ...(promoCode && { promoCode }) }).expect(201)).body.data.id as string;
+  const item = (size: ProductSize) => ({ productId, size, qty: 1, lineTotal: 1 });
+  const create = async (promoCode?: string, size: ProductSize = 'S') => (await api().post('/api/orders').set(auth())
+    .send({ items: [item(size)], ...(promoCode && { promoCode }) }).expect(201)).body.data.id as string;
   const pay = (id: string, key = randomUUID()) => api().post('/api/checkout').set(auth()).set('Idempotency-Key', key)
     .send({ orderId: id, method: 'CARD' });
+  const cancel = (id: string) => api().patch('/api/admin/orders/' + id + '/status')
+    .set('Authorization', 'Bearer ' + adminToken).send({ status: 'CANCELLED' }).expect(200);
   const complete = async (id: string) => {
     for (const status of ['PREPARING', 'READY', 'COMPLETED']) {
       await api().patch('/api/admin/orders/' + id + '/status').set('Authorization', 'Bearer ' + adminToken)
@@ -48,8 +52,15 @@ describe('Điểm thưởng, voucher và giao dịch thanh toán', () => {
       await db.user.create({ data: { id, role, email: id + '@example.test', passwordHash: 'test-only', emailVerifiedAt: new Date() } });
     }
     await db.ingredient.create({ data: { id: ingredientId, code: 'TEST_' + ingredientId, name: 'Rewards test', unit: 'G', onHand: 1000, reserved: 0 } });
-    await db.product.create({ data: { id: productId, name: 'Rewards test drink', category: 'other', prices: { create: { size: 'S', price: 59000 } } } });
-    await db.recipe.create({ data: { productId, size: 'S', ingredientId, quantity: 1 } });
+    await db.product.create({
+      data: {
+        id: productId, name: 'Rewards test drink', category: 'other',
+        prices: { create: [{ size: 'S', price: 59_000 }, { size: 'M', price: 90_000 }, { size: 'L', price: 100_000 }] },
+      },
+    });
+    await db.recipe.createMany({
+      data: (['S', 'M', 'L'] as const).map(size => ({ productId, size, ingredientId, quantity: 1 })),
+    });
     await db.promotion.create({ data: { id: promotionId, code, isRewardOnly: true, discountType: 'FIXED_AMOUNT', discountValue: 10000 } });
     await db.rewardItem.create({ data: { id: rewardId, name: 'Rewards test voucher', pointsCost: 5, promotionId } });
     const jwt = new JwtService({ secret: process.env.JWT_SECRET || 'super-secret-key' });
@@ -104,24 +115,55 @@ describe('Điểm thưởng, voucher và giao dịch thanh toán', () => {
     expect(await db.pointTransaction.count({ where: { userId, type: 'REDEEM' } })).toBe(1);
   });
 
-  it('hủy đơn đã trả tiền trước khi hoàn tất: hoàn lại voucher và cấp đền bù theo giá trước giảm', async () => {
+  it('hủy đơn 100.000đ giảm 10.000đ: đền bù 90.000đ, trả voucher và dùng được lượt đền bù', async () => {
     const cancelled = await create(code);
     await api().post('/api/checkout/' + cancelled + '/cancel').set(auth()).expect(200);
     expect(await balance()).toBe(0);
     expect(await db.userVoucher.count({ where: { userId, usedAt: null } })).toBe(1);
-    const id = await create(code);
+    const id = await create(code, 'L');
     await pay(id).expect(201);
+    expect(await db.payment.findMany({ where: { orderId: id }, select: { amount: true } })).toEqual([{ amount: 90_000 }]);
     expect(await balance()).toBe(0);
     expect(await db.userVoucher.count({ where: { userId, usedOrderId: id, usedAt: { not: null } } })).toBe(1);
-    await api().post('/api/orders').set(auth()).send({ items: [{ productId, size: 'S', qty: 1, lineTotal: 1 }], promoCode: code }).expect(400);
-    await Promise.all([0, 1].map(() => api().patch('/api/admin/orders/' + id + '/status').set('Authorization', 'Bearer ' + adminToken)
-      .send({ status: 'CANCELLED' }).expect(200)));
+    await api().post('/api/orders').set(auth()).send({ items: [item('S')], promoCode: code }).expect(400);
+    await Promise.all([cancel(id), cancel(id)]);
     expect(await balance()).toBe(0);
     expect(await db.userVoucher.count({ where: { userId, usedAt: null } })).toBe(1);
-    expect((await db.orderCompensation.findUniqueOrThrow({ where: { originalOrderId: id } })).amount).toBe(59_000);
+    const replacementPath = '/api/orders/' + id + '/replacement';
+    expect((await api().get(replacementPath).set(auth()).expect(200)).body.data)
+      .toMatchObject({ amount: 90_000, replacement: null });
     const overview = (await api().get('/api/rewards').set(auth()).expect(200)).body;
     expect(overview.points).toBe(0);
     expect(overview.vouchers.find((v: { code: string }) => v.code === code).count).toBe(1);
+    await api().post(replacementPath).set(auth()).send({ items: [item('S')] }).expect(400);
+    const replacement = (await api().post(replacementPath).set(auth()).send({ items: [item('M')] }).expect(201)).body.data;
+    expect(replacement.status).toBe('PAID');
+    expect(await db.payment.count({ where: { orderId: replacement.id } })).toBe(0);
+    expect((await api().get(replacementPath).set(auth()).expect(200)).body.data.replacement)
+      .toMatchObject({ id: replacement.id, total: 90_000, amountDue: 0 });
+
+    const nextRegular = await create(code);
+    expect((await db.order.findUniqueOrThrow({ where: { id: nextRegular } })).total).toBe(49_000);
+    await pay(nextRegular).expect(201);
+    expect(await db.userVoucher.count({ where: { userId, usedOrderId: nextRegular } })).toBe(1);
+    await cancel(nextRegular);
+  });
+
+  it('hủy đơn được giảm về 0đ chỉ trả lại voucher, không mở giỏ thay thế', async () => {
+    await db.promotion.update({ where: { id: promotionId }, data: { discountValue: 100_000 } });
+    try {
+      const id = await create(code, 'L');
+      await pay(id).expect(201);
+      expect(await db.payment.findMany({ where: { orderId: id }, select: { amount: true } })).toEqual([{ amount: 0 }]);
+      await Promise.all([cancel(id), cancel(id)]);
+      expect(await db.userVoucher.count({ where: { userId, usedAt: null } })).toBe(1);
+      expect((await db.orderCompensation.findUniqueOrThrow({ where: { originalOrderId: id } })).amount).toBe(0);
+      const path = '/api/orders/' + id + '/replacement';
+      await api().get(path).set(auth()).expect(404);
+      await api().post(path).set(auth()).send({ items: [item('L')] }).expect(404);
+    } finally {
+      await db.promotion.update({ where: { id: promotionId }, data: { discountValue: 10_000 } });
+    }
   });
 
   it('webhook PayOS lặp chỉ ghi một giao dịch; điểm được cộng khi COMPLETED', async () => {

@@ -125,7 +125,7 @@ function RewardsContent() {
               Tích Điểm & Đổi Quà
             </h1>
             <p className="text-gray-500 text-sm mt-1">
-              Mỗi 10.000đ thanh toán đơn hàng thành công = 1 điểm tích lũy
+              Tích điểm khi đơn hàng hoàn tất, mỗi 10.000đ được 1 điểm.
             </p>
           </div>
           <Link
@@ -150,9 +150,9 @@ function RewardsContent() {
 
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-xs text-emerald-100 space-y-1 z-10">
             <p className="font-bold text-white text-sm">💡 Thể lệ tích điểm:</p>
-            <p>• Điểm được cộng tự động sau khi thanh toán hóa đơn.</p>
-            <p>• Tính trên tiền thực trả sau giảm giá, làm tròn xuống theo từng lần thanh toán.</p>
-            <p>• Đơn thay thế chỉ tích điểm cho khoản trả thêm; điểm đơn gốc được giữ lại.</p>
+            <p>• Điểm được cộng tự động khi đơn chuyển sang trạng thái Hoàn tất.</p>
+            <p>• Với đơn thường, điểm tính trên tổng tiền sau giảm giá và làm tròn xuống theo từng đơn.</p>
+            <p>• Với đơn thay thế, điểm tính trên tổng giá trị đơn thay thế, gồm cả phần đền bù đã sử dụng.</p>
             <p>• Voucher đã đổi chỉ dùng được khi mã còn hiệu lực.</p>
             <p>• Mỗi đơn hàng dùng được một voucher.</p>
           </div>

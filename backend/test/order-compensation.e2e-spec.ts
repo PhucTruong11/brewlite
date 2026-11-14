@@ -56,7 +56,7 @@ describe('Đền bù đơn đã thanh toán', () => {
     await prisma.product.create({
       data: {
         id: replacementProductId, name: 'Món thay thế test', category: 'other', allowToppings: true,
-        prices: { create: [{ size: 'S', price: 50_000 }, { size: 'M', price: 55_000 }, { size: 'L', price: 60_000 }] },
+        prices: { create: [{ size: 'S', price: 45_000 }, { size: 'M', price: 55_000 }, { size: 'L', price: 60_000 }] },
       },
     });
     await prisma.topping.create({ data: { id: toppingId, name: toppingName, price: 5_000 } });
@@ -127,13 +127,13 @@ describe('Đền bù đơn đã thanh toán', () => {
     const notice = (await feed()).body.data.items.filter((entry: { orderId: string; status: string }) =>
       entry.orderId === id && entry.status === 'CANCELLED');
     expect(notice).toHaveLength(1);
-    expect(notice[0].order.compensationIssued.amount).toBe(50_000);
+    expect(notice[0].order.compensationIssued.amount).toBe(45_000);
     await api().get(replacementPath(id)).set('Authorization', auth(adminToken)).expect(404);
     await api().patch('/api/orders/notifications/' + notice[0].id + '/read').set('Authorization', auth()).expect(200);
     expect((await prisma.orderNotification.findUniqueOrThrow({ where: { id: notice[0].id } })).readAt).not.toBeNull();
     await prisma.productPrice.updateMany({ where: { productId: replacementProductId, size: 'S' }, data: { price: 40_000 } });
     await createReplacement(id, 'S').expect(400);
-    await prisma.productPrice.updateMany({ where: { productId: replacementProductId, size: 'S' }, data: { price: 50_000 } });
+    await prisma.productPrice.updateMany({ where: { productId: replacementProductId, size: 'S' }, data: { price: 45_000 } });
     const before = await prisma.user.findUniqueOrThrow({ where: { id: customerId } });
     const results = await Promise.all([
       createReplacement(id, 'S').expect(201), createReplacement(id, 'S').expect(201),
@@ -166,7 +166,7 @@ describe('Đền bù đơn đã thanh toán', () => {
       await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).send({ orderId: order.id }).expect(201);
       expect(provider).toHaveBeenCalledTimes(1);
       const payload = provider.mock.calls[0][0];
-      expect(payload.amount).toBe(10_000);
+      expect(payload.amount).toBe(15_000);
       expect(payload.expiredAt).toBe(Math.floor(deadline / 1000));
       const current = (await api().get(replacementPath(id)).set('Authorization', auth()).expect(200)).body.data.replacement;
       expect(current.paymentLink).toMatchObject(paymentLink.body.data);
@@ -182,16 +182,26 @@ describe('Đền bù đơn đã thanh toán', () => {
       const hook = (body: WebhookData, signature: string) => api().post('/api/payments/payos-webhook')
         .send({ code: '00', success: true, desc: 'Success', data: body, signature });
       await hook(data, 'invalid').expect(400);
-      const wrong = { ...data, amount: 9_000 };
+      const wrong = { ...data, amount: 14_000 };
       await hook(wrong, await sign(wrong)).expect(200);
       expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('PENDING');
       const signature = await sign(data);
       await Promise.all([hook(data, signature).expect(200), hook(data, signature).expect(200)]);
       expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('PAID');
-      expect(await prisma.payment.findMany({ where: { orderId: order.id }, select: { amount: true } })).toEqual([{ amount: 10_000 }]);
+      expect(await prisma.payment.findMany({ where: { orderId: order.id }, select: { amount: true } })).toEqual([{ amount: 15_000 }]);
       expect(await prisma.pointTransaction.count({ where: { orderId: order.id, type: 'EARN' } })).toBe(0);
       await adminStatus(order.id, 'CANCELLED').expect(200);
+      const original = (await api().get('/api/orders/' + id).set('Authorization', auth()).expect(200)).body.data;
+      expect(original.compensationIssued.replacements).toEqual([{ id: order.id, status: 'CANCELLED' }]);
+      const originalNotice = (await feed()).body.data.items.find((entry: { orderId: string; status: string }) =>
+        entry.orderId === id && entry.status === 'CANCELLED');
+      expect(originalNotice.order.compensationIssued.replacements).toEqual([{ id: order.id, status: 'CANCELLED' }]);
+      const renewed = (await api().get(replacementPath(order.id)).set('Authorization', auth()).expect(200)).body.data;
+      expect(renewed).toMatchObject({ amount: 60_000, replacement: null });
       expect((await createReplacement(id, 'M').expect(201)).body.data.id).toBe(order.id);
+      const next = (await createReplacement(order.id, 'L').expect(201)).body.data;
+      expect(next.status).toBe('PAID');
+      expect(await prisma.payment.count({ where: { orderId: next.id } })).toBe(0);
     } finally {
       provider.mockRestore();
     }
@@ -207,8 +217,8 @@ describe('Đền bù đơn đã thanh toán', () => {
       const attempt = (await createReplacement(id, 'L').expect(201)).body.data;
       await api().post(replacementPath(id) + '/payment').set('Authorization', auth()).send({ orderId: attempt.id }).expect(201);
       lookup.mockResolvedValue({
-        id: linkId, orderCode: provider.mock.calls[0][0].orderCode, amount: 10_000,
-        amountPaid: 0, amountRemaining: 10_000, status: 'EXPIRED',
+        id: linkId, orderCode: provider.mock.calls[0][0].orderCode, amount: 15_000,
+        amountPaid: 0, amountRemaining: 15_000, status: 'EXPIRED',
         createdAt: new Date().toISOString(), transactions: [], cancellationReason: null, canceledAt: null,
       });
       await prisma.order.update({
@@ -216,7 +226,7 @@ describe('Đền bù đơn đã thanh toán', () => {
       });
       const status = await api().get(replacementPath(id)).set('Authorization', auth()).expect(200);
       expect(lookup).toHaveBeenCalledWith(linkId);
-      expect(status.body.data).toMatchObject({ amount: 50_000, replacement: null });
+      expect(status.body.data).toMatchObject({ amount: 45_000, replacement: null });
       expect((await prisma.order.findUniqueOrThrow({ where: { id: attempt.id } })).inventoryState).toBe('RELEASED');
       const next = (await createReplacement(id, 'S').expect(201)).body.data;
       expect(next.id).not.toBe(attempt.id);
@@ -237,8 +247,9 @@ describe('Đền bù đơn đã thanh toán', () => {
     const cancel = vi.spyOn(PaymentRequests.prototype, 'cancel').mockResolvedValue({ id: linkId, status: 'CANCELLED', amountPaid: 0 } as never);
     try {
       const before = (await prisma.user.findUniqueOrThrow({ where: { id: customerId } })).loyaltyPoints;
-      const order = (await createReplacement(id, 'L').expect(201)).body.data;
+      const order = (await createReplacement(id, 'M').expect(201)).body.data;
       await api().post(replacementPath(id) + '/card').set('Authorization', auth()).send({ orderId: order.id, method: 'CARD' }).expect(201);
+      expect(await prisma.payment.findMany({ where: { orderId: order.id }, select: { amount: true } })).toEqual([{ amount: 5_000 }]);
       expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).loyaltyPointsEarned).toBe(0);
       expect((await prisma.user.findUniqueOrThrow({ where: { id: customerId } })).loyaltyPoints).toBe(before);
       expect(await prisma.pointTransaction.count({ where: { orderId: order.id } })).toBe(0);
@@ -260,7 +271,7 @@ describe('Đền bù đơn đã thanh toán', () => {
       const held = (await prisma.ingredient.findUniqueOrThrow({ where: { id: ingredientId } })).reserved;
       expect((await createReplacement(id, 'L').expect(201)).body.data.id).toBe(created.id);
       expect((await prisma.ingredient.findUniqueOrThrow({ where: { id: ingredientId } })).reserved).toEqual(held);
-      lookup.mockResolvedValue({ id: linkId, status: 'PAID', amountPaid: 10_000 } as never);
+      lookup.mockResolvedValue({ id: linkId, status: 'PAID', amountPaid: 15_000 } as never);
       await api().post(replacementPath(id) + '/cancel').set('Authorization', auth()).send({ orderId: created.id }).expect(409);
       await api().post(replacementPath(id) + '/card').set('Authorization', auth()).send({ orderId: created.id, method: 'CARD' }).expect(409);
       expect(cancel).not.toHaveBeenCalled();
@@ -329,7 +340,7 @@ describe('Đền bù đơn đã thanh toán', () => {
       await api().post(replacementPath(id) + '/card').set('Authorization', auth())
         .send({ orderId: second.id, method: 'EWALLET' }).expect(201);
       expect(await prisma.payment.findMany({ where: { orderId: second.id }, select: { amount: true } }))
-        .toEqual([{ amount: 10_000 }]);
+        .toEqual([{ amount: 15_000 }]);
     } finally {
       service.payos = saved;
     }
