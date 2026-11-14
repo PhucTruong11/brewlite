@@ -69,8 +69,8 @@ export function OrderNotifications({ userId }: { userId: string }) {
 
     for (const item of data.items) {
       if (item.status === 'PENDING' || item.status === 'PAID') continue;
-      // Bỏ qua thông báo hủy của các đơn thay thế tạm thời chưa thanh toán (đơn nháp), chỉ giữ lại đơn gốc cần đổi món
-      if (item.status === 'CANCELLED' && item.order.compensationSourceId && !item.order.compensationIssued) {
+      // Chỉ hiển thị thông báo hủy nếu đơn hàng đó có đền bù từ cửa hàng (đơn đã thanh toán bị hủy cần đổi món)
+      if (item.status === 'CANCELLED' && !item.order.compensationIssued) {
         continue;
       }
       if (!seen.has(item.orderId)) {

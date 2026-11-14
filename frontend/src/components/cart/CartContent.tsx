@@ -84,7 +84,7 @@ export function CartContent({ onClose }: CartContentProps) {
   const pendingReplacement = replacementSourceId && compensation.data?.replacement?.status === 'PENDING'
     ? compensation.data.replacement : null;
   const hasPendingOrder = !!pendingOrder || !!pendingReplacement;
-  const cartLocked = hasPendingOrder || isLoading || (isAuthenticated &&
+  const cartLocked = isLoading || (isAuthenticated &&
     (replacementSourceId ? compensation.isPending : pendingCheckout.isPending));
 
   // Xóa mã giảm giá nếu đang trong chế độ đền bù / đổi món
@@ -252,27 +252,20 @@ export function CartContent({ onClose }: CartContentProps) {
     }
   };
 
-  const handleCancelPending = async () => {
-    if ((!pendingOrder && !pendingReplacement) || submittingRef.current) return;
-    submittingRef.current = true;
-    setIsLoading(true);
-    setErrorMsg(null);
-    try {
-      if (pendingReplacement && replacementSourceId) {
-        await api.post(replacementPath(replacementSourceId) + '/cancel', { orderId: pendingReplacement.id });
-        await queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, replacementSourceId] });
-      } else if (pendingOrder) {
-        await api.post(`/checkout/${pendingOrder.id}/cancel`);
-        useCartStore.getState().forgetCheckout(pendingOrder.id);
-      }
-      await queryClient.invalidateQueries({ queryKey: ['orders', 'pending-checkout', user?.id] });
-      await inventoryCheck.refetch();
-    } catch (error) {
-      const message = isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : null;
-      setErrorMsg(message || 'Chưa hủy được đơn chờ. Vui lòng thử lại.');
-    } finally {
-      submittingRef.current = false;
-      setIsLoading(false);
+  const handleModifyCart = () => {
+    if (pendingOrder) {
+      const orderId = pendingOrder.id;
+      useCartStore.getState().forgetCheckout(orderId);
+      queryClient.setQueryData(['orders', 'pending-checkout', user?.id], null);
+      api.post(`/checkout/${orderId}/cancel`).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ['orders', 'pending-checkout', user?.id] });
+      inventoryCheck.refetch();
+    } else if (pendingReplacement && replacementSourceId) {
+      const repId = pendingReplacement.id;
+      const srcId = replacementSourceId;
+      api.post(replacementPath(srcId) + '/cancel', { orderId: repId }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ['replacement', user?.id, srcId] });
+      inventoryCheck.refetch();
     }
   };
 
@@ -345,24 +338,12 @@ export function CartContent({ onClose }: CartContentProps) {
     </div>
   );
 
-  const pendingBanner = hasPendingOrder && (
-    <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm" role="status">
-      <p className="font-bold text-primary">Bạn có đơn đang chờ thanh toán</p>
-      <p className="mt-1">Nguyên liệu đang được giữ cho đơn này. Tiếp tục đơn cũ, hoặc hủy đơn chờ để sửa giỏ; các món đã chọn vẫn được giữ lại.</p>
-      <div className="mt-2 flex flex-wrap gap-4">
-        <button type="button" disabled={isLoading} onClick={handleCheckoutClick} className="font-semibold text-primary underline">Tiếp tục thanh toán</button>
-        <button type="button" disabled={isLoading} onClick={handleCancelPending} className="font-semibold text-red-700 underline">Hủy đơn chờ để sửa giỏ</button>
-      </div>
-    </div>
-  );
-
   if (!hasHydrated || authLoading) return <p className="p-6 text-center text-sm text-text/70">Đang tải giỏ hàng...</p>;
 
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         {replacementBanner}
-        {pendingBanner}
         <div className="bg-gray-100 p-6 rounded-full mb-4">
           <ShoppingBag size={48} className="text-gray-300" />
         </div>
@@ -392,13 +373,18 @@ export function CartContent({ onClose }: CartContentProps) {
           {/* Danh sách sản phẩm */}
           <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-background/50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {replacementBanner}
-            {pendingBanner}
             <h2 className="font-bold text-lg text-text mb-4">
               Món đã chọn ({totalItems()})
             </h2>
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
               {items.map((item, index) => (
-                <CartItemRow key={getCartItemKey(item)} item={item} index={index} disabled={cartLocked} />
+                <CartItemRow
+                  key={getCartItemKey(item)}
+                  item={item}
+                  index={index}
+                  disabled={cartLocked}
+                  onModify={handleModifyCart}
+                />
               ))}
             </div>
           </div>
