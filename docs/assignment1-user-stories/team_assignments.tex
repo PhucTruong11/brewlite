@@ -1,5 +1,5 @@
 % !TEX program = xelatex
-\documentclass[12pt,a4paper]{article}
+\documentclass[11pt,a4paper]{article}
 
 \usepackage{iftex}
 \ifPDFTeX
@@ -10,47 +10,115 @@
   \setmainfont{Times New Roman}
 \fi
 \usepackage[vietnamese]{babel}
-\usepackage{geometry}
-\usepackage{array}
-\usepackage{booktabs}
-\geometry{left=25mm,right=25mm,top=23mm,bottom=23mm}
+\usepackage[margin=23mm]{geometry}
+\usepackage{array,booktabs,tabularx,xcolor,fancyhdr,hyperref}
+
+\definecolor{BrewGreen}{HTML}{285648}
+\hypersetup{colorlinks=true,urlcolor=BrewGreen,
+  pdftitle={BrewLite - Phân công công việc Assignment 1}}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{5pt}
-\newcommand{\assignmentrow}[3]{%
-  \parbox[c][22mm][c]{35mm}{#1} &
-  \parbox[c][22mm][c]{74mm}{#2} &
-  \parbox[c][22mm][c]{33mm}{\raggedright #3} \\}
+\setlength{\parskip}{4pt}
+\renewcommand{\arraystretch}{1.33}
+\setlength{\tabcolsep}{4pt}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\brewlink}[2]{\href{https://github.com/PhucTruong11/brewlite/#1}{#2}}
+\newcommand{\pr}[1]{\brewlink{pull/#1}{PR~\##1}}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[L]{\small BrewLite \enspace|\enspace Assignment 1}
+\fancyfoot[R]{\small Trang \thepage}
+\renewcommand{\headrulewidth}{0pt}
 
 \begin{document}
 \begin{center}
-  {\Large\bfseries BREWLITE}\\[5pt]
-  {\large Bảng phân công công việc}\\[3pt]
-  {Assignment 1 -- Công nghệ Phần mềm}
+  {\small TRƯỜNG ĐẠI HỌC SÀI GÒN}\\[2pt]
+  {\small KHOA CÔNG NGHỆ THÔNG TIN}\\[12pt]
+  {\Large\bfseries\color{BrewGreen} BẢNG PHÂN CÔNG CÔNG VIỆC}\\[5pt]
+  {\normalsize BrewLite \enspace|\enspace Assignment 1 \enspace|\enspace Công nghệ Phần mềm}
 \end{center}
 
-\vspace{7mm}
-\begin{center}
+\section*{1. Phân công thành viên}
+
 \small
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{35mm}@{\hspace{7mm}}p{74mm}@{\hspace{7mm}}p{33mm}@{}}
+\begin{tabularx}{\linewidth}{@{}L{8mm}L{36mm}YL{26mm}r@{}}
 \toprule
-\parbox[c][15mm][c]{35mm}{\centering\textbf{Họ và tên}} &
-\parbox[c][15mm][c]{74mm}{\centering\textbf{Nhiệm vụ}} &
-\parbox[c][15mm][c]{33mm}{\centering\textbf{Tỉ lệ đóng góp nhiệm vụ}} \\
+\textbf{Mã} & \textbf{Thành viên} & \textbf{Phần việc phụ trách} & \textbf{Tỷ lệ theo task}
+& \shortstack[r]{\textbf{Tỷ lệ toàn}\\\textbf{dự án}} \\
 \midrule
-\assignmentrow{Trương Trọng Phúc}{Khởi tạo cấu trúc dự án; xây dựng giỏ hàng và API tạo đơn hàng. (Task 1, 5, 6)}{Task 1 (100\%)
-Task 5 (100\%)
-Task 6 (100\%)}
-\assignmentrow{Chế Văn Nam}{Xây dựng thanh toán Ví/Thẻ, xử lý kết quả và chống ghi nhận thanh toán lặp (Task 8).}{Task 8 (100\%)}
-\assignmentrow{Đỗ Đạt}{Kiểm soát tồn kho; xây dựng Order State Machine (Task 10.1, 10.2, 10.3).}{Task 10 (75\%)}
-\assignmentrow{Lại Đình Nguyên}{Xây dựng API danh sách sản phẩm và giao diện Menu (Task 2,3); thêm voucher trong admin (Task 10.4).}{Task 2 (100\%)
-Task 3 (100\%)
-Task 10.4 (12.5\%)}
-\assignmentrow{Lê Trung Hưng}{Xây dựng trang chi tiết với size/topping (Task 4); xử lý voucher trong giỏ hàng, khuyến mãi và điểm thưởng (Task 10.4).}{Task 4 (100\%)
-Task 10.4 (12.5\%)}
-\assignmentrow{Đỗ Hữu Đăng Khoa}{Xây dựng trang xác nhận, lịch sử đơn; docker-compose. (Task 9).}{Task 9 (100\%)}
-\assignmentrow{Phạm Khánh Nguyên}{Xây dựng đăng ký, đăng nhập JWT và bảo vệ các route cần xác thực (Task 7).}{Task 7 (100\%)}
+TV1 & \textbf{Trương Trọng Phúc}\newline 3124410287
+& Khởi tạo repo, khung Next.js và NestJS. Xây dựng giỏ hàng, kiểm tra tồn và API tạo đơn từ giỏ.
+& Task 1 (100\%)\newline Task 5 (100\%)\newline Task 6 (100\%) & 17\% \\
+\addlinespace
+TV2 & \textbf{Chế Văn Nam}\newline 3124410217
+& Xây dựng checkout và thanh toán ví/thẻ, xử lý kết quả và chống ghi nhận thanh toán lặp.
+& Task 8 (100\%) & 15\% \\
+\addlinespace
+TV3 & \textbf{Đỗ Đạt}\newline 3124410054
+& Xây dựng luồng chuyển trạng thái đơn. Quản lý tồn nguyên liệu và công thức pha chế, phụ trách các mục 10.1--10.3.
+& Task 10 (75\%) & 14\% \\
+\addlinespace
+TV4 & \textbf{Lại Đình Nguyên}\newline 3124410235
+& Phụ trách API danh sách sản phẩm và giao diện menu. Tham gia quản lý voucher ở trang admin (10.4).
+& Task 2 (100\%)\newline Task 3 (100\%)\newline Task 10 (12,5\%) & 14\% \\
+\addlinespace
+TV5 & \textbf{Lê Trung Hưng}\newline 3124410128
+& Phụ trách trang chi tiết đồ uống với lựa chọn size và topping. Xây dựng khuyến mãi trong giỏ và trang đổi điểm (10.4).
+& Task 4 (100\%)\newline Task 10 (12,5\%) & 13,33\% \\
+\addlinespace
+TV6 & \textbf{Đỗ Hữu Đăng Khoa}\newline 3124410155
+& Xây dựng màn hình xác nhận, chi tiết và lịch sử đơn hàng, theo dõi tiến độ đơn. Phụ trách phần bàn giao có Docker Compose.
+& Task 9 (100\%) & 13,33\% \\
+\addlinespace
+TV7 & \textbf{Phạm Khánh Nguyên}\newline 3124410239
+& Xây dựng đăng ký, đăng nhập JWT và bảo vệ các tuyến cần xác thực. Bổ sung quên mật khẩu và phân quyền.
+& Task 7 (100\%) & 13,34\% \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Tổng cộng}} & \textbf{100\%} \\
 \bottomrule
-\end{tabular}
-\end{center}
+\end{tabularx}
+
+\vspace{5pt}
+Tỷ lệ theo bảng phân công của nhóm. Các tỷ lệ ở Task 10 tính trên toàn task.
+Nhật ký ghi thêm các phần hỗ trợ có minh chứng GitHub.
+
+\clearpage
+
+\section*{2. Nhật ký công việc}
+
+\small
+Các ngày của PR là ngày gộp vào nhánh \texttt{main}. Bảng ghi những mốc tiêu biểu có thể đối chiếu trên GitHub.
+
+\begin{tabularx}{\linewidth}{@{}L{24mm}L{19mm}YL{30mm}@{}}
+\toprule
+\textbf{Ngày} & \textbf{Thành viên} & \textbf{Nội dung đã tích hợp} & \textbf{Minh chứng} \\
+\midrule
+21--24/09/2026 & TV1 & Khởi tạo cấu trúc frontend, backend, Prisma và workflow CI cho pull request. & \brewlink{commit/8ac5de8}{\texttt{8ac5de8}}, \pr{5} \\
+\addlinespace
+27/09/2026 & TV4 & Xây dựng giao diện menu và kết nối dữ liệu API sản phẩm. & \pr{16} \\
+\addlinespace
+29/09--01/10 & TV1 & Gắn giỏ lên header, tích hợp API tạo đơn, kiểm tra dữ liệu và tồn kho. & \pr{18}, \pr{19}, \pr{20} \\
+\addlinespace
+03/10/2026 & TV5 & Tích hợp module khuyến mãi và áp mã trong giỏ. & \pr{22} \\
+\addlinespace
+06/10/2026 & TV7, TV1 & Hoàn thiện đăng nhập và thông tin tài khoản. TV1 hỗ trợ xử lý lỗi tích hợp frontend. & \pr{30} \\
+\addlinespace
+07/10/2026 & TV2 & Tích hợp checkout với giỏ, thanh toán và voucher. & \pr{31} \\
+\addlinespace
+10--11/10/2026 & TV3, TV4 & TV3 làm giao diện quản trị và chuyển trạng thái đơn. TV4 bổ sung nút quay lại và thêm vào giỏ từ trang chi tiết. & \pr{33}, \pr{34} \\
+\addlinespace
+18--22/10/2026 & TV5, TV6,\newline TV7, TV1 & Đổi điểm, theo dõi đơn, quên mật khẩu và phân quyền. TV1 tích hợp Docker Compose cho toàn bộ ứng dụng. & \pr{40}, \pr{43}, \pr{47}, \pr{54} \\
+\addlinespace
+23--25/10/2026 & TV1, TV5 & Bổ sung kiểm thử giỏ và API, cập nhật trang điểm thưởng. & \pr{56}, \pr{57}, \pr{58} \\
+\addlinespace
+26/10--02/11 & TV3, TV1 & Thêm giao diện voucher quản trị, API nguyên liệu và công thức. TV1 điều chỉnh kiểm tra tồn trong luồng đặt hàng. & \pr{61}, \pr{62}, \pr{64}, \pr{67} \\
+\addlinespace
+05--11/11/2026 & TV1, TV2 & Hoàn thiện tài liệu chạy local, luồng thanh toán và đổi món, giữ kho khi quay lại checkout. & \pr{73}, \pr{78}, \pr{79} \\
+\addlinespace
+13--14/11/2026 & TV4, TV1 & TV4 bổ sung giới hạn đổi thưởng và cộng điểm khi đơn hoàn tất. TV1 sửa checkout đơn thay thế và tính đền bù theo số tiền thực trả. & \pr{80}, \pr{82}, \pr{83} \\
+\bottomrule
+\end{tabularx}
+
+\vspace{5pt}
+\brewlink{commits/main/}{Lịch sử nhánh \texttt{main} của BrewLite trên GitHub}.
 \end{document}
