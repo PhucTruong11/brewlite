@@ -1024,7 +1024,7 @@
           ]
         },
         {
-          "name": "5.7 Điểm chỉ cộng một lần",
+          "name": "5.7 Chưa cộng điểm khi mới PAID",
           "request": {
             "method": "GET",
             "header": [
@@ -1042,7 +1042,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200',()=>pm.response.to.have.status(200));",
-                  "const j=pm.response.json();pm.test('Điểm tăng đúng một lần',()=>pm.expect(j.points).to.equal(Number(pm.variables.get('pointsBefore'))+Number(pm.variables.get('pointsEarned'))));"
+                  "const j=pm.response.json();pm.test('Chưa cộng điểm trước khi COMPLETED',()=>pm.expect(j.points).to.equal(Number(pm.variables.get('pointsBefore'))));"
                 ]
               }
             }
@@ -1267,7 +1267,32 @@
           ]
         },
         {
-          "name": "6.7 Chi tiết đơn giữ snapshot món",
+          "name": "6.7 Điểm chỉ cộng một lần khi COMPLETED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/rewards"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200',()=>pm.response.to.have.status(200));",
+                  "const j=pm.response.json();pm.test('Điểm tăng đúng một lần khi COMPLETED',()=>pm.expect(j.points).to.equal(Number(pm.variables.get('pointsBefore'))+Number(pm.variables.get('pointsEarned'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6.8 Chi tiết đơn giữ snapshot món",
           "request": {
             "method": "GET",
             "header": [
@@ -1292,7 +1317,7 @@
           ]
         },
         {
-          "name": "6.8 Lịch sử đơn của tôi",
+          "name": "6.9 Lịch sử đơn của tôi",
           "request": {
             "method": "GET",
             "header": [

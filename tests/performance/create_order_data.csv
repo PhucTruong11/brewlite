@@ -1,0 +1,7 @@
+productId,productName,size,qty,toppingName,lineTotal,promoCode
+1c0d8c51-38c3-43c7-a799-9402b6e7f0ad,Phin Sua Da,S,1,,29000,
+fbbc409f-b3b7-4920-aae7-82d481644785,Phin Den Da,S,1,,29000,
+2e71d25c-4306-40f7-a852-67d03cfe7e96,Bac Xiu,S,1,,29000,
+af5582dc-5f63-416b-8912-f4928a66971f,Tra Thanh Dao,S,1,Trân Châu Trắng,54000,DEMO15
+184216e4-5d88-484b-96fc-e3cc0626e499,Americano,S,1,,45000,DEMO15
+e29b96f1-ff19-4663-9ccb-6aa7c4a11c48,Caramel Macchiato,S,1,,69000,DEMO15
