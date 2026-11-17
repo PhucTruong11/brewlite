@@ -1,0 +1,11 @@
+code,subtotal,expectedStatus,note
+DEMO15,30000,201,Hop le tai nguong toi thieu 30k
+DEMO15,45000,201,Hop le don 45k
+DEMO15,55000,201,Hop le don 55k
+DEMO15,78000,201,Hop le don 78k
+DEMO15,90000,201,Hop le don 90k
+DEMO15,120000,201,Hop le don 120k
+DEMO15,150000,201,Hop le don 150k
+DEMO15,200000,201,Hop le don 200k
+DEMO15,20000,400,Chua du gia tri don toi thieu (<30k)
+KHONG_CO_MA_NAY_987,100000,404,Ma khong ton tai

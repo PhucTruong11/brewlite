@@ -1,0 +1,406 @@
+{
+  "info": {
+    "_postman_id": "b7e23c91-5a44-4d19-9c21-887766554433",
+    "name": "BrewLite Performance Test (Random + CSV)",
+    "description": "Bo test Performance cho BrewLite ho tro ca 2 che do: Random Mode va CSV Mode",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Random Mode (Khong can file CSV)",
+      "item": [
+        {
+          "name": "0.1 POST /api/cart/validate (Random mon, size, so luong)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const products = [",
+                  "  { id: '1c0d8c51-38c3-43c7-a799-9402b6e7f0ad', allowToppings: false },",
+                  "  { id: 'fbbc409f-b3b7-4920-aae7-82d481644785', allowToppings: false },",
+                  "  { id: '2e71d25c-4306-40f7-a852-67d03cfe7e96', allowToppings: false },",
+                  "  { id: 'af5582dc-5f63-416b-8912-f4928a66971f', allowToppings: true },",
+                  "  { id: '184216e4-5d88-484b-96fc-e3cc0626e499', allowToppings: false },",
+                  "  { id: 'e29b96f1-ff19-4663-9ccb-6aa7c4a11c48', allowToppings: false }",
+                  "];",
+                  "const sizes = ['S', 'M', 'L'];",
+                  "const toppings = ['Trân Châu Trắng', 'Kem Sữa Mặn', 'Thạch Cà Phê'];",
+                  "const p = products[Math.floor(Math.random() * products.length)];",
+                  "const s = sizes[Math.floor(Math.random() * sizes.length)];",
+                  "const q = Math.floor(Math.random() * 3) + 1;",
+                  "const t = p.allowToppings ? JSON.stringify([toppings[Math.floor(Math.random() * toppings.length)]]) : '[]';",
+                  "pm.variables.set('randProductId', p.id);",
+                  "pm.variables.set('randSize', s);",
+                  "pm.variables.set('randQty', q);",
+                  "pm.variables.set('randToppings', t);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200/201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "pm.test('Thoi gian phan hoi < 3000ms (NFR-01)', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{randProductId}}\",\n      \"size\": \"{{randSize}}\",\n      \"qty\": {{randQty}},\n      \"toppings\": {{randToppings}},\n      \"lineTotal\": 29000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/cart/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cart",
+                "validate"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "0.2 POST /api/promotions/apply (Random gia tri don)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sub = (Math.floor(Math.random() * 10) + 3) * 10000;",
+                  "pm.variables.set('randSubtotal', sub);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Thoi gian phan hoi < 3000ms (NFR-01)', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"DEMO15\",\n  \"subtotal\": {{randSubtotal}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/promotions/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotions",
+                "apply"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "0.3 POST /api/auth/login (Random email/password test tai Login)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Math.random() < 0.8) {",
+                  "  pm.variables.set('randLoginEmail', 'admin@brewlite.com');",
+                  "  pm.variables.set('randLoginPassword', '@Admin123');",
+                  "} else {",
+                  "  const uid = pm.variables.replaceIn('{{$randomUUID}}').slice(0, 8);",
+                  "  pm.variables.set('randLoginEmail', 'user_' + uid + '@brewlite.com');",
+                  "  pm.variables.set('randLoginPassword', 'Pass_' + uid + '@123');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Phan hoi hop le 200 hoac 401', () => pm.expect(pm.response.code).to.be.oneOf([200, 401]));",
+                  "pm.test('Thoi gian phan hoi < 3000ms', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{randLoginEmail}}\",\n  \"password\": \"{{randLoginPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "1. Login CSV",
+      "item": [
+        {
+          "name": "POST /api/auth/login (tu login_data.csv)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.iterationData.get('email')) {",
+                  "  pm.variables.set('email', 'admin@brewlite.com');",
+                  "  pm.variables.set('password', '@Admin123');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const expected = Number(pm.iterationData.get('expectedStatus') || 200);",
+                  "pm.test('Dung ma HTTP mong doi (' + expected + ')', () => pm.response.to.have.status(expected));",
+                  "pm.test('Thoi gian phan hoi < 3000ms', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Cart Validate CSV",
+      "item": [
+        {
+          "name": "POST /api/cart/validate (tu cart_validate_data.csv)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.iterationData.get('productId')) {",
+                  "  pm.variables.set('productId', '1c0d8c51-38c3-43c7-a799-9402b6e7f0ad');",
+                  "  pm.variables.set('size', 'S');",
+                  "  pm.variables.set('qty', 1);",
+                  "  pm.variables.set('lineTotal', 29000);",
+                  "}",
+                  "const tname = pm.iterationData.get('toppingName');",
+                  "pm.variables.set('toppingsJson', tname ? JSON.stringify([tname]) : '[]');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200/201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const rawExp = pm.iterationData.get('expectedAvailable');",
+                  "const expectedAvailable = rawExp !== undefined ? String(rawExp) === 'true' : true;",
+                  "const j = pm.response.json();",
+                  "const actualAvailable = j.available !== undefined ? j.available : j.data.available;",
+                  "pm.test('Ket qua kiem tra ton kho khop expectedAvailable', () => pm.expect(actualAvailable).to.equal(expectedAvailable));",
+                  "pm.test('Thoi gian phan hoi < 3000ms (NFR-01)', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"size\": \"{{size}}\",\n      \"qty\": {{qty}},\n      \"toppings\": {{toppingsJson}},\n      \"lineTotal\": {{lineTotal}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/cart/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cart",
+                "validate"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Promo Apply CSV",
+      "item": [
+        {
+          "name": "POST /api/promotions/apply (tu promo_apply_data.csv)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.iterationData.get('code')) {",
+                  "  pm.variables.set('code', 'DEMO15');",
+                  "  pm.variables.set('subtotal', 50000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const expected = Number(pm.iterationData.get('expectedStatus') || 201);",
+                  "pm.test('HTTP ' + expected, () => pm.response.to.have.status(expected));",
+                  "pm.test('Thoi gian phan hoi < 3000ms (NFR-01)', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{code}}\",\n  \"subtotal\": {{subtotal}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/promotions/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotions",
+                "apply"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001/api",
+      "type": "string"
+    }
+  ]
+}

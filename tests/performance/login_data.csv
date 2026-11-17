@@ -1,0 +1,21 @@
+email,password,expectedStatus,note
+admin@brewlite.com,@Admin123,200,Admin hop le 1
+admin@brewlite.com,@Admin123,200,Admin hop le 2
+admin@brewlite.com,@Admin123,200,Admin hop le 3
+admin@brewlite.com,@Admin123,200,Admin hop le 4
+admin@brewlite.com,@Admin123,200,Admin hop le 5
+admin@brewlite.com,@Admin123,200,Admin hop le 6
+admin@brewlite.com,@Admin123,200,Admin hop le 7
+admin@brewlite.com,@Admin123,200,Admin hop le 8
+admin@brewlite.com,@Admin123,200,Admin hop le 9
+admin@brewlite.com,WrongPass123,401,Sai mat khau (test bcrypt compare fail)
+admin@brewlite.com,@Admin123,200,Admin hop le 11
+admin@brewlite.com,@Admin123,200,Admin hop le 12
+admin@brewlite.com,@Admin123,200,Admin hop le 13
+admin@brewlite.com,@Admin123,200,Admin hop le 14
+admin@brewlite.com,@Admin123,200,Admin hop le 15
+admin@brewlite.com,@Admin123,200,Admin hop le 16
+admin@brewlite.com,@Admin123,200,Admin hop le 17
+admin@brewlite.com,@Admin123,200,Admin hop le 18
+admin@brewlite.com,@Admin123,200,Admin hop le 19
+notfound_user@brewlite.com,@Admin123,401,Email khong ton tai
